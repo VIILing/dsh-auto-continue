@@ -1,0 +1,8 @@
+# @deepseek-ai/dsh-auto-continue bundle patch
+#
+# `dsh.bundle.patch` 层：通过官方 CLI 安装后（`dsh plugin --profile <name> add
+# @deepseek-ai/dsh-auto-continue@<version>`），profile boot 会合并此 patch，
+# 向 cordis 插件树插入一行插件挂载。无需手工改 profile 文件。
+- insert:
+    - id: auto-continue
+      name: '@deepseek-ai/dsh-auto-continue'
