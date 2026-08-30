@@ -143,9 +143,10 @@ interface PlatformQuotaAdapter {
 
 ## Client UI
 
-浏览器侧设置卡片与 host 同属**单包** `@deepseek-ai/dsh-auto-continue`（源码在 `src/client/`），
-注册 `settings.plugin.item`（key = `auto-continue`），实现实例卡片列表 + 增删改表单 +
-provider 绑定多选（已绑定其它实例的 provider 隐藏）。卡片通过 `/auto-continue/api` 自建路由读写设置。
+浏览器侧设置页与 host 同属**单包** `@deepseek-ai/dsh-auto-continue`（源码在 `src/client/`），
+注册 **`settings.section`**（id = `auto-continue`），在 Settings 面板中占据**一个独立的顶层选项卡**
+（与「General / Models / Plugins」并列，而非内嵌在 Plugins 页里），实现实例列表 + 增删改表单 +
+provider 绑定多选（已绑定其它实例的 provider 隐藏）。设置页通过 `/auto-continue/api` 自建路由读写设置。
 
 单包是第三方独立插件的正确形态：DSH 的 client module 系统（`dsh.client`）会**扫描 host loader 条目**的
 `package.json` 来发现 client bundle，因此 client 必须与 host 同包声明（参照 DSH-better-sidebar）。

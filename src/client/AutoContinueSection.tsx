@@ -82,7 +82,7 @@ function editStateToInstance(s: EditState): AutoContinueInstance {
   }
 }
 
-export function AutoContinueCard({ t }: { t: TranslateNS<'auto-continue'> }) {
+export function AutoContinueSection({ t }: { t: TranslateNS<'auto-continue'> }) {
 
   const [rows, setRows] = useState<InstanceRow[]>([])
   const [bindings, setBindings] = useState<Record<string, string>>({})
@@ -177,6 +177,8 @@ export function AutoContinueCard({ t }: { t: TranslateNS<'auto-continue'> }) {
 
   return (
     <div data-dsh-auto-continue>
+      <h2>{t('title')}</h2>
+      <p>{t('intro')}</p>
       {error !== null ? <div role="alert">{error}</div> : null}
       {rows.length === 0 && editing === null ? <div>{t('empty')}</div> : null}
       <ul>

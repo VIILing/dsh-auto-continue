@@ -1,6 +1,9 @@
 /** zh/en dictionaries registered under the `auto-continue` locale namespace. */
 
 export const zh = {
+  nav: '自动续跑',
+  title: '自动续跑',
+  intro: '配置平台实例与 provider 绑定，在配额耗尽后自动等待配额重置并重试请求。',
   empty: '尚未配置平台实例。点击“新增”创建第一个实例。',
   add: '新增',
   edit: '编辑',
@@ -33,6 +36,9 @@ export const zh = {
 } as const
 
 export const en = {
+  nav: 'Auto-continue',
+  title: 'Auto-continue',
+  intro: 'Configure platform instances and provider bindings to automatically wait for quota reset and retry on quota exhaustion.',
   empty: 'No platform instance configured yet. Click "Add" to create the first one.',
   add: 'Add',
   edit: 'Edit',

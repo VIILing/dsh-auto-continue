@@ -1,26 +1,30 @@
 /**
- * Client entry for the auto-continue settings card.
+ * Client entry for the auto-continue settings section.
  *
- * Registers a `settings.plugin.item` card keyed by the `auto-continue` settings
- * namespace. The card reads/writes settings through the host plugin's own
- * fenced HTTP route (see `api.ts`), not the DSH settings RPC domain, whose
- * allowlist does not serve third-party namespaces.
+ * Registers a top-level `settings.section` entry (id = `auto-continue`) so the
+ * plugin gets its own standalone tab in the Settings panel, alongside "General",
+ * "Models", and "Plugins" — NOT a card nested inside the Plugins page. The
+ * section reads/writes settings through the host plugin's own fenced HTTP route
+ * (see `api.ts`), not the DSH settings RPC domain, whose allowlist does not
+ * serve third-party namespaces.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
-import { AutoContinueCard } from './AutoContinueCard.tsx'
+import { AutoContinueSection } from './AutoContinueSection.tsx'
 import { en, zh } from './locales.ts'
 
 /**
- * `settings.plugin.item` 是 keyed slot，由第一方包 `dsh-client-ui-settings-plugins`
- * 在运行时声明、其类型也住在该包内；第三方插件不依赖该包，故在此本地补声明。
+ * `settings.section` is a list slot declared by the first-party settings domain
+ * base (`dsh-client-ui-settings`); a third-party plugin cannot depend on that
+ * package, so the declaration is re-stated locally (same shape as the canonical
+ * contract). Each entry becomes one nav row in the Settings panel.
  */
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    'settings.plugin.item': {
-      kind: 'keyed'
+    'settings.section': {
+      kind: 'list'
       scope: 'root'
-      owner: { children?: never }
+      owner: { close: () => void }
     }
   }
 }
@@ -31,14 +35,20 @@ export function apply(ctx: ClientContext): void {
   ctx.locale.register('auto-continue', 'zh', zh)
   ctx.locale.register('auto-continue', 'en', en)
 
-  ctx.slots.inject('settings.plugin.item', () =>
+  // Registration-time nav label follows the active locale via a thunk; the
+  // section content receives the framework-synthesized `t` seat through the
+  // declared `locale` namespace.
+  const t = ctx.locale.bind('auto-continue')
+  ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
       {
-        name: 'settings.plugin.item',
-        key: 'auto-continue',
+        name: 'settings.section',
+        id: 'auto-continue',
+        order: 30,
+        label: () => t('nav'),
         locale: 'auto-continue',
       },
-      AutoContinueCard,
+      AutoContinueSection,
     ),
   )
 }

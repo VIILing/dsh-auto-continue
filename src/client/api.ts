@@ -53,8 +53,8 @@ export function getSettings(): Promise<SettingsView> {
   return call<SettingsView>('settings.get')
 }
 
-export function updateSettings(patch: Record<string, unknown>, expectedRevision?: number): Promise<SettingsView> {
-  return call<SettingsView>('settings.update', { patch, expectedRevision })
+export function updateSettings(section: Record<string, unknown>, expectedRevision?: number): Promise<SettingsView> {
+  return call<SettingsView>('settings.update', { section, expectedRevision })
 }
 
 export function listProviders(): Promise<ProviderOption[]> {

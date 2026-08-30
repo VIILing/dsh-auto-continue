@@ -1,7 +1,8 @@
 /**
  * Headless-render mount lane: prove the npm-packed plugin mounts into a real
  * `dsh web` instance and its client bundle registers without crashing the
- * shell, and that the settings card renders inside Plugins → Plugin configuration.
+ * shell, and that the settings section renders as its own standalone tab in
+ * the Settings panel (not nested inside the Plugins page).
  */
 import { test, expect, type Page } from '@playwright/test'
 import { PAGE_URL } from './host'
@@ -44,7 +45,7 @@ test('client bundle mounts without crashing the shell', async ({ page }) => {
   expect(ours).toEqual([])
 })
 
-test('settings card renders in Plugins → Plugin configuration', async ({ page }) => {
+test('settings section renders as a standalone tab', async ({ page }) => {
   await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
   await page.waitForTimeout(10_000)
   await dismissDialogs(page)
@@ -52,12 +53,10 @@ test('settings card renders in Plugins → Plugin configuration', async ({ page 
   // Open the settings panel (sidebar-foot trigger "Settings").
   await page.getByRole('button', { name: /Settings|设置/i }).first().click()
 
-  // Navigate to the Plugins section (nav entry "Plugins" / "插件").
-  await page.getByText(/^Plugins$|^插件$/).first().click()
+  // Navigate to the auto-continue section: its own nav entry, not a card
+  // nested inside Plugins → Plugin configuration.
+  await page.getByRole('button', { name: /Auto-continue|自动续跑/ }).click()
 
-  // Open the configurable tab ("Plugin configuration" / "插件配置").
-  await page.getByText(/Plugin configuration|插件配置/).first().click()
-
-  // The auto-continue card renders with its own marker.
+  // The auto-continue section renders with its own marker.
   await expect(page.locator('[data-dsh-auto-continue]')).toBeVisible({ timeout: 15_000 })
 })

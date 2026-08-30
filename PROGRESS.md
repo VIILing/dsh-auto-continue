@@ -8,8 +8,8 @@
 
 **v1 + v2 全部完成并验证通过。** 单包（host + client）独立仓库，含三层模型、
 instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api` 路由、
-浏览器侧 `settings.plugin.item` 卡片。验证：`pnpm typecheck` ✅、`pnpm build` ✅、
-`pnpm test`（68 用例）✅、`pnpm test:e2e`（2 用例，对真实 `dsh web`）✅。
+浏览器侧 `settings.section` 独立设置选项卡。验证：`pnpm typecheck` ✅、`pnpm build` ✅、
+`pnpm test`（71 用例）✅、`pnpm test:e2e`（2 用例，对真实 `dsh web`）✅。
 
 ## 任务列表与进度
 
@@ -83,7 +83,7 @@ instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api
 │   ├── notice.ts           # resumeNotice 消息构造
 │   ├── wire.ts             # /auto-continue/api JSON 读写辅助
 │   ├── trust-fence.ts      # DNS-rebinding / 跨站防御
-│   └── client/             # 浏览器侧卡片（settings.plugin.item）
+│   └── client/             # 浏览器侧独立设置选项卡（settings.section）
 │       ├── index.tsx       #   入口：inject + slot 注册
 │       ├── AutoContinueCard.tsx
 │       ├── api.ts          #   自建路由 fetch + 编辑/解绑纯函数
@@ -166,7 +166,9 @@ monorepo（client 包被显式编入 web-app bundle）。故将 client 并入根
 
 ### 差异决策落地
 
-- 差异 1（UI 槽位）：`settings.plugin.item` 卡片（key = `auto-continue`），轻量 UI；本地补 `SlotMap`/`LocaleNamespaceMap` 声明。
+- 差异 1（UI 槽位）：`settings.section`（id = `auto-continue`）独立设置选项卡，与「General / Models / Plugins」
+  并列；本地补 `SlotMap`/`LocaleNamespaceMap` 声明。（早期曾用 `settings.plugin.item` 卡片内嵌于 Plugins 页，
+  后按用户反馈改为独立选项卡，见下文「UI 修正」。）
 - 差异 2（设置读写）：自建 fenced 路由 `/auto-continue/api`（`settings.get`/`settings.update`/`providers.list`），
   走 `ctx.webServer.register` + `trust-fence`（DNS-rebinding 防御），不走 DSH settings RPC allowlist；`managementKey` 密码留空不修改（replace 前从当前值回注 secret）。
 - 差异 3（host 注册）：保持 `installSettingsSection` 不变。
@@ -178,6 +180,20 @@ monorepo（client 包被显式编入 web-app bundle）。故将 client 并入根
 Playwright 无头 Chromium 渲染：
 
 - `tests/e2e/mount.e2e.ts` 断言：① client bundle 挂载无 `pageerror`、无 `auto-continue` console 错误；
-  ② 导航「Settings → Plugins → Plugin configuration」后 `[data-dsh-auto-continue]` 卡片可见。
+  ② 导航「Settings → Auto-continue（独立选项卡）」后 `[data-dsh-auto-continue]` 设置页可见。
 - 首次运行需 `npx playwright install chromium` + `npx playwright install-deps chromium`（系统库）。
 - **2 个 e2e 用例均通过**（对 DSH 0.1.1-rc.2 真实实例）。
+
+### UI 修正（用户测试反馈后）
+
+1. **独立设置选项卡**：早期把设置做成了 `settings.plugin.item`（keyed slot），被内嵌进
+   「Settings → Plugins → Plugin configuration」内容页。改为注册 `settings.section`
+   （id = `auto-continue`，order 30），在 Settings 面板获得与「General / Models / Plugins」
+   并列的独立顶层选项卡；设置内容由 `locale: 'auto-continue'` 自动注入 `t` 座位。
+   - 组件 `AutoContinueCard.tsx` → `AutoContinueSection.tsx`，加标题/简介文案。
+   - 本地 `SlotMap` 声明从 `settings.plugin.item` 改为 `settings.section`（owner = `{ close }`）。
+2. **保存报「section must be a plain object」**：client `api.ts` 的 `updateSettings` 误把
+   载荷放在 `patch` 键下，而 host 路由读取的是 `section` 键，导致 `section` 恒为 undefined。
+   改为发送 `{ section, expectedRevision }`；新增 `tests/client-api.spec.ts` 锁定该载荷形状
+   （并覆盖 `buildInstanceEdit`/`buildInstanceDelete` 的 `managementKeyRef` 保留与解绑语义）。
+3. e2e 第二条用例从「Plugins → Plugin configuration」改为直接断言独立选项卡可见。
