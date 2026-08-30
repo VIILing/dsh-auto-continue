@@ -60,3 +60,24 @@ test('settings section renders as a standalone tab', async ({ page }) => {
   // The auto-continue section renders with its own marker.
   await expect(page.locator('[data-dsh-auto-continue]')).toBeVisible({ timeout: 15_000 })
 })
+
+test('add-instance card opens and saves a new instance', async ({ page }) => {
+  await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded' })
+  await page.waitForTimeout(10_000)
+  await dismissDialogs(page)
+
+  await page.getByRole('button', { name: /Settings|设置/i }).first().click()
+  await page.getByRole('button', { name: /Auto-continue|自动续跑/ }).click()
+  await expect(page.locator('[data-dsh-auto-continue]')).toBeVisible({ timeout: 15_000 })
+
+  // Open the new-instance draft card via the dashed "add" button.
+  await page.locator('[data-dsh-auto-continue-add]').click()
+  const idField = page.locator('[data-dsh-auto-continue-id]')
+  await expect(idField).toBeVisible()
+
+  // Fill the id, save, and expect the persisted card (collapsed, named by id).
+  await idField.fill('zenmux-e2e')
+  await page.locator('[data-dsh-auto-continue-save]').click()
+  await expect(page.locator('[data-dsh-auto-continue-card]', { hasText: 'zenmux-e2e' }))
+    .toBeVisible({ timeout: 15_000 })
+})

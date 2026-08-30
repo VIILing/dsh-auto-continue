@@ -148,12 +148,19 @@ interface PlatformQuotaAdapter {
 （与「General / Models / Plugins」并列，而非内嵌在 Plugins 页里），实现实例列表 + 增删改表单 +
 provider 绑定多选（已绑定其它实例的 provider 隐藏）。设置页通过 `/auto-continue/api` 自建路由读写设置。
 
+UI 复用 DSH 设计令牌（`--dsw-alias-*` CSS 变量）与第一方原语（`@deepseek-ai/dsh-client-ui-primitives`
+的 `Modal` / 图标），风格对齐官方设置页：实例以**可展开卡片**呈现（标题 + 徽标 + 箭头，展开即编辑），
+底部为**虚线「新增」按钮**（同「模型 → 添加提供方」样式），删除走 `Modal` 确认，保存/放弃更改在卡片
+页脚。
+
 单包是第三方独立插件的正确形态：DSH 的 client module 系统（`dsh.client`）会**扫描 host loader 条目**的
 `package.json` 来发现 client bundle，因此 client 必须与 host 同包声明（参照 DSH-better-sidebar）。
 
 `tsdown.config.ts` 在独立仓库内本地复刻（vendor 逻辑）了 DSH 官方 client bundle 预设（无需依赖
 monorepo）：用 `tsdown` + `lightningcss` 产出 `lib/client.js`（`window.__ModuleLoader__.load({id,
-factory})` 注册），host 半体产出 `lib/index.js`。
+factory})` 注册，CSS Module 内联注入 `<style data-plugin>`），host 半体产出 `lib/index.js`。client 的
+外部依赖经模块表解析：`react` / `@deepseek-ai/dsh-client-ui-slots` / `@deepseek-ai/dsh-client-ui-primitives`
+等（均为 `PLATFORM_MODULES` 预置模块）。
 
 ## 限制
 

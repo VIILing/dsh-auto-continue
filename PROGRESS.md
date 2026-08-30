@@ -9,7 +9,7 @@
 **v1 + v2 全部完成并验证通过。** 单包（host + client）独立仓库，含三层模型、
 instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api` 路由、
 浏览器侧 `settings.section` 独立设置选项卡。验证：`pnpm typecheck` ✅、`pnpm build` ✅、
-`pnpm test`（71 用例）✅、`pnpm test:e2e`（2 用例，对真实 `dsh web`）✅。
+`pnpm test`（71 用例）✅、`pnpm test:e2e`（3 用例，对真实 `dsh web`）✅。
 
 ## 任务列表与进度
 
@@ -85,13 +85,17 @@ instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api
 │   ├── trust-fence.ts      # DNS-rebinding / 跨站防御
 │   └── client/             # 浏览器侧独立设置选项卡（settings.section）
 │       ├── index.tsx       #   入口：inject + slot 注册
-│       ├── AutoContinueCard.tsx
+│       ├── AutoContinueSection.tsx   # 父：标题/简介/卡片列表/新增按钮
+│       ├── InstanceCard.tsx #   子：可展开卡片 + 表单字段 + 删除确认
+│       ├── AutoContinueSection.module.css  # 设计令牌样式
+│       ├── css-modules.d.ts #   CSS Module 类型声明
 │       ├── api.ts          #   自建路由 fetch + 编辑/解绑纯函数
 │       └── locales.ts      #   zh/en
 └── tests/
     ├── config.spec.ts
     ├── settings.spec.ts
     ├── api.spec.ts
+    ├── client-api.spec.ts
     ├── platforms/zenmux.spec.ts
     ├── recovery.spec.ts
     └── integration.spec.ts
@@ -116,7 +120,7 @@ instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api
 | V7 | 构建/类型检查/测试 | [x] | 最终 68 用例全部通过 |
 | V8 | client 侧 UI | [x] | 单包 `src/client/`（index.tsx + AutoContinueCard.tsx + api.ts + locales.ts），vendor tsdown clientBundle 编译 |
 | V9 | 更新 README / PROGRESS | [x] | 本文件与 README 已更新为 v2 |
-| V10 | Playwright UI 冒烟 + 文档收尾 | [x] | `tests/e2e/`（2 用例）+ `scripts/e2e-mount.sh`；本文件与 README 最终核对 |
+| V10 | Playwright UI 冒烟 + 文档收尾 | [x] | `tests/e2e/`（3 用例）+ `scripts/e2e-mount.sh`；本文件与 README 最终核对 |
 
 ### v2 关键决策
 
@@ -134,14 +138,14 @@ instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api
 
 - 类型检查：`pnpm typecheck`（`tsc --noEmit`）✅
 - 构建：`pnpm build`（`tsc -p tsconfig.build.json` 出声明 + `tsdown` 出 host/client 双半体）✅
-- 单元/集成测试：`pnpm test`（`vitest run`）→ **6 个测试文件、68 个用例全部通过** ✅
+- 单元/集成测试：`pnpm test`（`vitest run`）→ **7 个测试文件、71 个用例全部通过** ✅
 - settings 变更语义：内存版 `SettingsProvider` + `installSettingsSection` 集成验证（新增实例/绑定、解绑、删除实例后 in-flight 等待不中断、跨字段校验拒绝写入）✅
-- UI 冒烟：`pnpm test:e2e`（Playwright 对真实 `dsh web`）→ **2 个用例全部通过** ✅
+- UI 冒烟：`pnpm test:e2e`（Playwright 对真实 `dsh web`）→ **3 个用例全部通过** ✅
 
 ### 依赖清单（v2 新增）
 
 - host runtime 新增：`@deepseek-ai/dsh-settings`（`installSettingsSection` / `settingsNamespace`）、`@deepseek-ai/dsh-host-webserver`（`ctx.webServer.register` 自建路由）。
-- client 新增：`@deepseek-ai/dsh-client-runtime`、`dsh-client-ui-slots`、`dsh-client-locale` + `react`/`react-dom` + `tsdown`/`lightningcss`（构建期）。
+- client 新增：`@deepseek-ai/dsh-client-runtime`、`dsh-client-ui-slots`、`dsh-client-ui-primitives`（`Modal`/图标）、`dsh-client-locale` + `react`/`react-dom` + `tsdown`/`lightningcss`（构建期）。
 
 ### 独立仓库构建 client UI（已实现，推翻此前 blocked 结论）
 
@@ -149,7 +153,7 @@ instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api
 了 monorepo 的 `clientBundle()` 预设，无需依赖 monorepo 源码：
 
 - 根 `tsdown.config.ts` 本地实现 `clientBundle` / `purityGatePlugin` / `makeCssPlugin` / `injectTag`，
-  硬编码 `CLIENT_EXTERNALS`（react/cordis/`@deepseek-ai/dsh-client-ui-slots`/`dsh-client-runtime/client` 等）与 `INLINE_SAFE` 正则，
+  硬编码 `CLIENT_EXTERNALS`（react/cordis/`@deepseek-ai/dsh-client-ui-slots`/`@deepseek-ai/dsh-client-ui-primitives`/`dsh-client-runtime/client` 等）与 `INLINE_SAFE` 正则，
   并以 `window.__ModuleLoader__.load({id, factory})` CJS 壳注册 bundle。
 - 产物：`lib/index.js`（host，ESM node）+ `lib/client.js`（client，browser CJS）+ `lib/types/`（声明）。
 
@@ -182,7 +186,7 @@ Playwright 无头 Chromium 渲染：
 - `tests/e2e/mount.e2e.ts` 断言：① client bundle 挂载无 `pageerror`、无 `auto-continue` console 错误；
   ② 导航「Settings → Auto-continue（独立选项卡）」后 `[data-dsh-auto-continue]` 设置页可见。
 - 首次运行需 `npx playwright install chromium` + `npx playwright install-deps chromium`（系统库）。
-- **2 个 e2e 用例均通过**（对 DSH 0.1.1-rc.2 真实实例）。
+- **3 个 e2e 用例均通过**（对 DSH 0.1.1-rc.2 真实实例）。
 
 ### UI 修正（用户测试反馈后）
 
@@ -197,3 +201,21 @@ Playwright 无头 Chromium 渲染：
    改为发送 `{ section, expectedRevision }`；新增 `tests/client-api.spec.ts` 锁定该载荷形状
    （并覆盖 `buildInstanceEdit`/`buildInstanceDelete` 的 `managementKeyRef` 保留与解绑语义）。
 3. e2e 第二条用例从「Plugins → Plugin configuration」改为直接断言独立选项卡可见。
+
+### UI 美化（卡片列表 + 新增按钮，用户反馈后）
+
+按用户要求对齐 DSH 官方设置页视觉（`ui-settings-plugins` 的卡片列表/展开效果 + `ui-settings-models`
+的「添加提供方」按钮）：
+
+- **卡片列表 + 展开**：`AutoContinueCard.tsx` 拆为 `AutoContinueSection.tsx`（父：标题/简介/卡片列表/
+  新增按钮）+ `InstanceCard.tsx`（子：可展开卡片，标题 + 密钥/提示徽标 + 箭头，展开即编辑，页脚
+  保存/放弃更改/删除）。每张卡片持有独立 `open` 与草稿状态；保存成功后父级 bump `saveNonce` 使卡片
+  重挂载 → 自动收起并回种为持久化值。
+- **删除确认**：弃用 `window.confirm`，改用 `@deepseek-ai/dsh-client-ui-primitives` 的 `Modal`。
+- **新增按钮**：底部虚线「+ 新增」按钮（`1px dashed var(--dsw-alias-border-l3)`，同「添加提供方」）。
+- **样式**：新增 `AutoContinueSection.module.css`，全部颜色走 `--dsw-alias-*` 设计令牌（自动适配明暗主题），
+  表单字段复刻 `ValueField`/`SecretField` 的标签 + 输入框 + hint 布局；错误色用 `--dsw-alias-state-error-primary`
+  （注：官方 `fields.module.css` 引用的 `--dsw-alias-label-error` 实际未定义，本插件已改用正确的 state 令牌）。
+- **依赖**：client 新增 peer `@deepseek-ai/dsh-client-ui-primitives`（已列入 `CLIENT_EXTERNALS`，运行时由
+  `PLATFORM_MODULES` 模块表解析）；新增 `src/client/css-modules.d.ts` 类型声明。
+- **e2e**：新增第三条用例「点新增 → 填 id → 保存 → 断言卡片出现」，覆盖卡片交互与保存链路（`section` 载荷）。
