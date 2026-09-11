@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LlmFailure } from '@deepseek-ai/dsh-llm'
 import {
@@ -225,5 +226,74 @@ describe('ZenMux fetchQuota', () => {
     await expect(
       adapter.fetchQuota('cred', 'https://zenmux.ai', new AbortController().signal),
     ).rejects.toThrow()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 黄金样本回归（v1 §1.3 / §18-8）
+//
+// `tests/fixtures/zenmux-subscription-detail.json` 是一次真实 ZenMux
+// `GET /api/v1/management/subscription/detail` 的原始响应，逐字节保存。它把
+// §8.3 的字段映射钉死在真实数据上：若 ZenMux 改变响应结构（字段改名、类型变化、
+// 缺失），本组用例会失败，提醒修订映射与文档，而不是让漂移悄悄上线。
+// ---------------------------------------------------------------------------
+const GOLDEN_STATS_BODY: unknown = JSON.parse(
+  readFileSync(new URL('../fixtures/zenmux-subscription-detail.json', import.meta.url), 'utf8'),
+)
+
+describe('黄金样本：真实 ZenMux 统计响应回归 (§8.3)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('字段映射与真实响应一致（5h / 7d）', () => {
+    const snap = mapSnapshot(GOLDEN_STATS_BODY)
+    expect(snap.windows.map((w) => w.name)).toEqual(['5h', '7d'])
+    const byName = Object.fromEntries(snap.windows.map((w) => [w.name, w]))
+    expect(byName['5h']).toEqual({
+      name: '5h',
+      usagePercentage: 0.0196,
+      remainingFlows: 49.02,
+      resetsAt: '2026-09-11T13:52:58.000Z',
+    })
+    expect(byName['7d']).toEqual({
+      name: '7d',
+      usagePercentage: 0.1088,
+      remainingFlows: 189.82,
+      resetsAt: '2026-09-12T08:48:40.000Z',
+    })
+  })
+
+  it('真实响应的额外字段与无 usage 的 quota_monthly 不影响映射', () => {
+    const raw = GOLDEN_STATS_BODY as { data: Record<string, unknown> }
+    // 真实响应带 plan / currency / base_usd_per_flow / account_status 等本插件
+    // 不消费的字段；quota_monthly 只有上限、没有 usage_percentage。
+    expect(Object.keys(raw.data)).toContain('account_status')
+    expect(raw.data['quota_monthly']).not.toHaveProperty('usage_percentage')
+    expect(() => mapSnapshot(GOLDEN_STATS_BODY)).not.toThrow()
+  })
+
+  it('真实响应两窗口均未耗尽 → 等待目标取 5h resets_at', () => {
+    const snap = mapSnapshot(GOLDEN_STATS_BODY)
+    expect(snap.windows.every((w) => !isWindowExhausted(w))).toBe(true)
+    expect(resolveWaitTarget(snap)).toBe(Date.parse('2026-09-11T13:52:58.000Z'))
+  })
+
+  it('fetchQuota 全链路：真实响应体 → 归一化快照（URL 与 Bearer 头正确）', async () => {
+    const fetchMock = vi.fn(async () => ({
+      status: 200,
+      json: async () => GOLDEN_STATS_BODY,
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const snap = await adapter.fetchQuota('mgmt-key', 'https://zenmux.ai', new AbortController().signal)
+    expect(snap.windows.map((w) => `${w.name}:${w.usagePercentage}`)).toEqual(['5h:0.0196', '7d:0.1088'])
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://zenmux.ai/api/v1/management/subscription/detail',
+      expect.objectContaining({
+        method: 'GET',
+        headers: { Authorization: 'Bearer mgmt-key' },
+      }),
+    )
   })
 })
