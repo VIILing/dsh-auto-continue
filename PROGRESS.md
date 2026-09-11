@@ -6,10 +6,15 @@
 
 ## 当前状态
 
-**v1 + v2 全部完成并验证通过。** 单包（host + client）独立仓库，含三层模型、
-instance 键控状态机、`installSettingsSection` + 自建 `/auto-continue/api` 路由、
-浏览器侧 `settings.section` 独立设置选项卡。验证：`pnpm typecheck` ✅、`pnpm build` ✅、
-`pnpm test`（71 用例）✅、`pnpm test:e2e`（3 用例，对真实 `dsh web`）✅。
+**v1 + v2 全部完成，并已升级到 DSH `0.1.5-rc.2`（最新已发布版本）验证通过。**
+单包（host + client）独立仓库，含三层模型、instance 键控状态机、
+`SettingsProvider.installSection` + 自建 `/auto-continue/api` 路由、
+浏览器侧 `settings.section` 独立设置选项卡。
+验证：`pnpm typecheck` ✅、`pnpm build` ✅、`pnpm test`（7 文件 / 75 用例）✅、
+`pnpm test:e2e`（3 用例，对真实 `dsh web`）✅。
+
+> 框架依赖基线：DSH `0.1.5-rc.2`（升级前为 `0.1.1-rc.2`）。升级影响评估见
+> `doc/DSH-0.1.5-升级影响评估.md`。
 
 ## 任务列表与进度
 
@@ -219,3 +224,83 @@ Playwright 无头 Chromium 渲染：
 - **依赖**：client 新增 peer `@deepseek-ai/dsh-client-ui-primitives`（已列入 `CLIENT_EXTERNALS`，运行时由
   `PLATFORM_MODULES` 模块表解析）；新增 `src/client/css-modules.d.ts` 类型声明。
 - **e2e**：新增第三条用例「点新增 → 填 id → 保存 → 断言卡片出现」，覆盖卡片交互与保存链路（`section` 载荷）。
+
+---
+
+## 黄金样本回归（v1 §1.3 / §18-8）
+
+需求方提供了真实 ZenMux 统计接口响应样本（一次真实
+`GET https://zenmux.ai/api/v1/management/subscription/detail` 的原始 JSON），
+已逐字节保存为 `tests/fixtures/zenmux-subscription-detail.json`，并在
+`tests/platforms/zenmux.spec.ts` 新增 4 个「黄金样本」回归用例：
+
+- **§8.3 字段映射**：`data.quota_5_hour` → 窗口 `5h`、`data.quota_7_day` → 窗口 `7d`；
+  `usage_percentage` / `remaining_flows` / `resets_at` 原样映射，与真实样本逐字段一致。
+- **额外字段容忍**：真实响应携带 `plan` / `currency` / `base_usd_per_flow` / `account_status`
+  等本插件不消费的字段，且 `quota_monthly` 只有上限、无 `usage_percentage`——映射不受影响。
+- **等待目标**：真实样本两窗口均未耗尽 → `resolveWaitTarget` 取 `5h.resets_at`
+  （§10.2「7d 未耗尽 → 5h resetsAt」规则）。
+- **`fetchQuota` 全链路**：请求 URL（`/api/v1/management/subscription/detail`）与
+  `Authorization: Bearer <key>` 请求头正确，真实响应体可归一化为快照。
+
+### 结论与剩余
+
+- ✅ §8.3 统计字段映射已用真实样本核对通过（§18-8「样本到位后必须通过」→ 已通过）。
+- ⏳ §9.3 的 402 识别正则**仍待真实 402 样本核对**。当前真实账号额度健康
+  （5h `usage_percentage=0.0196`、7d `0.1088`），无法在不耗尽配额的前提下构造真实 402；
+  待拿到真实 `quote_exceeded` 响应（含 `dsh-llm-pi-ai` 压平后的形态）后，再补一次黄金样本回归，
+  必要时按真实样本修订 `src/platforms/zenmux.ts` 正则与 v1 §9.3。
+
+验证：`pnpm typecheck` ✅、`pnpm test` → **7 个测试文件、75 个用例全部通过** ✅。
+
+---
+
+## DSH 0.1.5-rc.2 升级迁移
+
+> 依据 `doc/DSH-0.1.5-升级影响评估.md`（含逐条证据与实证结果）。
+> 目标版本：DSH `0.1.5-rc.2`（npm dist-tag `next`，当时的**最新已发布**版本）。
+
+### 迁移内容
+
+| 项 | 改动 |
+|---|---|
+| host settings 接入 | `installSettingsSection(ctx, ns, …)` → `ctx.inject(['settings'], sctx => sctx.settings.installSection(ctx, 'auto-continue', …))`；`settingsNamespace('auto-continue')` → 字面量 `'auto-continue' as const`（0.1.5 删除了这两个导出，且 `installSection` 在 0.1.1 中不存在，无兼容写法） |
+| client 上下文 | `import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'` → `import type { Context as ClientContext } from '@deepseek-ai/cordis'` + `import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'`（后者提供 `ctx.slots` 声明；`dsh-client-runtime` 整包被删除） |
+| 依赖 | 全部 DSH 包 `0.1.1-rc.2` → `0.1.5-rc.2`；`cordis` `4.0.1` → `4.0.2`；peer 区间 `^0.1.0-rc.8` → `^0.1.5-rc.2`；移除 `dsh-client-runtime`，新增 `dsh-client-ui-renderer` |
+| `dsh-settings` 依赖类型 | 迁移后 host 不再 value-import `dsh-settings`（只剩 `import type {}` 声明合并），从 `dependencies` 移到 `devDependencies` |
+| manifest | `dsh.client.inject` → `["@deepseek-ai/dsh-client-ui-renderer", "@deepseek-ai/dsh-client-locale"]`；新增 `engines.dsh: "^0.1.5-rc.1"` |
+| 构建 | `tsdown.config.ts` 的 `CLIENT_EXTERNALS` 对齐 0.1.5 baseline（`'cordis'` → `'@deepseek-ai/cordis'`，移除 `dsh-client-runtime/client`，补 `dsh-client-store` / `dsh-client-ui-dockkit`） |
+| trust-fence | 同步官方 0.1.5：Origin 比较由 `.hostname` 收紧为 `.host`（端口必须一致），`"null"` opaque origin 经解析失败被拒 |
+| 测试 | 两个 spec 移除 `settingsNamespace` 用法；`waitForNamespace` 形参 `SettingsNamespace` → `string` |
+| `pnpm-workspace.yaml` | pnpm 在安装新 rc 依赖时自动追加 `minimumReleaseAgeExclude`（20 个 `@deepseek-ai/*@0.1.5-rc.2`）——这是 pnpm 供应链「最短发布年龄」策略要求的豁免，**必须保留**，否则 `pnpm install` 会被 rc 版本的新鲜度拦截 |
+
+**业务逻辑零改动**：`config.ts` / `state.ts` / `platform.ts` / `platforms/zenmux.ts` / `recovery.ts` /
+`notice.ts` / `wire.ts` 及 client 其余文件均未改。
+
+### 关键决策
+
+- **不追求双版本兼容**：`installSection` 在 0.1.1 中不存在，`installSettingsSection` 在 0.1.5 中被硬删除，
+  两者无交集，因此直接迁移而非做兼容 shim。
+- **升级到最新已发布版本**：npm 上 `0.1.5-rc.2` 为最新（`next` 标签），仓库 HEAD 虽领先 139 个 commit
+  但版本号相同、无对应发布物，故以 `0.1.5-rc.2` 为准。
+- **同步 trust-fence**：该文件是从 DSH 复刻的，保持与官方一致比保持旧行为更安全。
+
+### 升级后验证
+
+- `pnpm typecheck` ✅（升级前对着 0.1.5 有 7 个错误，迁移后 0 错误）
+- `pnpm test` ✅ **7 个测试文件、75 个用例全部通过**
+- `pnpm build` ✅ host `lib/index.js` + client `lib/client.js`；client bundle 仅 require
+  `react` / `react/jsx-runtime` / `@deepseek-ai/dsh-client-ui-primitives`（均在 0.1.5 `PLATFORM_MODULES` 内）
+- 真实 `dsh web` 挂载 ✅：`pnpm test:e2e`（`scripts/e2e-mount.sh`）全流程通过——
+  `pnpm build` + `pnpm pack` → `dsh plugin --profile web add file:<tarball>` 注册进
+  `dsh.profile.bundles` → 启动真实 `dsh web --port 0` → Playwright 无头 Chromium 断言：
+  ① client bundle 挂载无 `pageerror`；② Settings →「自动续跑」独立选项卡可见；
+  ③ 点「新增」→ 填 id → 保存 → 卡片出现（覆盖 `/auto-continue/api` 的新 settings 写入链路）。
+  另外 HTTP 拉取首页确认 `__DSH_BOOT__` 引导图包含 `@deepseek-ai/dsh-auto-continue/client.js`。
+  > 运行前提：`npx playwright install chromium` + `npx playwright install-deps chromium`
+  > （后者需 root；本机已装）。裸机/沙箱下如 `~/.cache` 不可写，用
+  > `PLAYWRIGHT_BROWSERS_PATH=/tmp/pw-browsers` 安装并运行。
+
+### 未覆盖
+
+- 真实 402 黄金样本核对仍待办（与本次升级无关，见上一节）。
