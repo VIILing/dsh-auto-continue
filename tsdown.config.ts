@@ -22,15 +22,17 @@ const NODE_BUILTINS = new Set([
   ...builtinModules.map((id) => `node:${id}`),
 ])
 
+/** Mirrors the DSH 0.1.5 client baseline (`packages/client/web/src/platform.ts`). */
 const CLIENT_EXTERNALS = [
   'react',
   'react/jsx-runtime',
   'react-dom',
   'react-dom/client',
-  'cordis',
+  '@deepseek-ai/cordis',
+  '@deepseek-ai/dsh-client-store',
   '@deepseek-ai/dsh-client-ui-slots',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-runtime/client',
+  '@deepseek-ai/dsh-client-ui-dockkit',
 ]
 
 const INLINE_SAFE = /^@deepseek-ai\/dsh-(host-apiproxy|session|llm|tools|brand)(\/|$)/

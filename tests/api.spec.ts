@@ -1,10 +1,10 @@
 import { Context } from '@deepseek-ai/cordis'
-import { SettingsProvider, settingsNamespace, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
+import { SettingsProvider, type SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { afterEach, describe, expect, it } from 'vitest'
 import QuotaRuntime from '../src/index.ts'
 import type { Config, PlatformInstanceConfig } from '../src/config.ts'
 
-const NS = settingsNamespace('auto-continue')
+const NS = 'auto-continue' as const
 
 class MemorySettingsProvider extends SettingsProvider {
   private doc: Record<string, unknown> = {}

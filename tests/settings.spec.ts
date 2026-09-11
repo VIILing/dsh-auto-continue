@@ -3,14 +3,13 @@ import type { RequestErrorAction } from '@deepseek-ai/dsh-agent'
 import type { LlmFailure } from '@deepseek-ai/dsh-llm'
 import {
   SettingsProvider,
-  settingsNamespace,
   type SettingsNamespace,
 } from '@deepseek-ai/dsh-settings'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import QuotaRuntime from '../src/index.ts'
 import type { Config, PlatformInstanceConfig } from '../src/config.ts'
 
-const NS = settingsNamespace('auto-continue')
+const NS = 'auto-continue' as const
 
 /** 内存版 settings provider，用于测试 settings 变更语义。 */
 class MemorySettingsProvider extends SettingsProvider {
@@ -68,7 +67,7 @@ function makePayload(provider: string, failure: LlmFailure) {
   }
 }
 
-async function waitForNamespace(ctx: Context, ns: SettingsNamespace): Promise<void> {
+async function waitForNamespace(ctx: Context, ns: string): Promise<void> {
   for (let i = 0; i < 100; i++) {
     if (ctx.settings.get(ns) !== undefined) return
     await new Promise((resolve) => setTimeout(resolve, 0))

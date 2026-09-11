@@ -3,9 +3,9 @@ import type { Agent, RequestErrorAction } from '@deepseek-ai/dsh-agent'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import type { LlmFailure, LlmProviderInfo } from '@deepseek-ai/dsh-llm'
+import type { LlmFailure } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type {} from '@deepseek-ai/dsh-settings'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 
 import {
@@ -33,7 +33,7 @@ import {
 import { isTrustedApiRequest } from './trust-fence.ts'
 import { AutoContinueApiError, readJsonBody, writeError, writeJson, writeOk } from './wire.ts'
 
-const SETTINGS_NAMESPACE = settingsNamespace('auto-continue')
+const SETTINGS_NAMESPACE = 'auto-continue' as const
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -80,14 +80,18 @@ export default class QuotaRuntime extends Service {
     validateConfig(config, this.platformNames())
 
     // 可选 settings 接入：settings 服务存在时，entry config 作为 base 层。
-    installSettingsSection(ctx, SETTINGS_NAMESPACE, Config, config, {
-      setSource: (source) => {
-        this.currentConfig = source
-      },
-      onChange: () => {
-        this.reconcileInstances()
-      },
-      validate: (value) => validateConfig(value, this.platformNames()),
+    // DSH 0.1.5 起自由函数 installSettingsSection 被移除，改为
+    // SettingsProvider.installSection；原先自带的 ctx.inject 包裹需要自己写。
+    ctx.inject(['settings'], (settingsCtx) => {
+      settingsCtx.settings.installSection(ctx, SETTINGS_NAMESPACE, Config, config, {
+        setSource: (source) => {
+          this.currentConfig = source
+        },
+        onChange: () => {
+          this.reconcileInstances()
+        },
+        validate: (value) => validateConfig(value, this.platformNames()),
+      })
     })
 
     // 插件卸载时取消 lifetime signal，清理进行中的等待。

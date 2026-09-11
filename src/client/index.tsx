@@ -8,7 +8,10 @@
  * (see `api.ts`), not the DSH settings RPC domain, whose allowlist does not
  * serve third-party namespaces.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+// Type-only: pulls the SlotRegistry service merge (ctx.slots). DSH 0.1.5 removed
+// `@deepseek-ai/dsh-client-runtime`, whose ClientContext used to carry it.
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { AutoContinueSection } from './AutoContinueSection.tsx'
 import { en, zh } from './locales.ts'

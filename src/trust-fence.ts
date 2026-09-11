@@ -4,6 +4,10 @@
  * it from @deepseek-ai/dsh-client-connection). Host-header loopback or a
  * configured trusted authority passes; cross-site browser markers refuse. This
  * is a DNS-rebinding / cross-site defense, not authentication.
+ *
+ * Synced with DSH 0.1.5 (`packages/client/connection/src/api-request-trust.ts`):
+ * the Origin fence now compares the full authority (`host` = hostname + port)
+ * and an opaque `"null"` origin is refused by the same parse failure.
  */
 import type { IncomingHttpHeaders } from 'node:http'
 
@@ -54,10 +58,14 @@ export function isTrustedApiRequest(request: ApiTrustRequest, trustedHosts: read
   if (hostUrl === undefined) return false
   if (!isLoopbackHostname(hostUrl.hostname) && !isTrustedAuthority(hostUrl, trustedHosts)) return false
   if (header(request.headers, 'sec-fetch-site') === 'cross-site') return false
+  // Origin fence: when a browser attaches an Origin it must be exactly this
+  // authority (compared through the same normalization as the Host). Absent
+  // Origin is fine — the Host fence above already bound the request. The
+  // literal "null" (sandboxed iframes, file: pages) is an opaque origin, refused.
   const origin = header(request.headers, 'origin')
   if (origin === undefined) return true
   try {
-    return new URL(origin).hostname === hostUrl.hostname
+    return new URL(origin).host === hostUrl.host
   } catch {
     return false
   }

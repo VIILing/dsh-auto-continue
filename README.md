@@ -95,9 +95,13 @@ provider 共享同一恢复状态。
 
 ## Settings 接入
 
-插件通过 `installSettingsSection(ctx, 'auto-continue', Config, entry, hooks)` 注册
-settings namespace `auto-continue`；`cordis.yml` 的 `config` 作为 base 层，UI 修改写入
+插件通过 `ctx.inject(['settings'], sctx => sctx.settings.installSection(ctx, 'auto-continue', Config, entry, hooks))`
+注册 settings namespace `auto-continue`；`cordis.yml` 的 `config` 作为 base 层，UI 修改写入
 user 层。`managementKey` 标记 `role('secret')`，线路上不回显。设置变更语义见需求 v2 §4.1。
+
+> DSH `0.1.5` 起，旧自由函数 `installSettingsSection()` / `settingsNamespace()` 已被移除，
+> 改用 `SettingsProvider.installSection()`；本插件已按新 API 迁移（见
+> `doc/DSH-0.1.5-升级影响评估.md`）。
 
 此外插件注册一个自建的 fenced HTTP 路由 `/auto-continue/api`（`ctx.webServer.register` +
 trust-fence），暴露 `settings.get`（脱敏）/ `settings.update`（replace 前回注 secret，实现
@@ -178,6 +182,10 @@ factory})` 注册，CSS Module 内联注入 `<style data-plugin>`），host 半�
    可从 user 角色切换为 system 角色。
 
 ## 安装与挂载
+
+> 兼容的 DSH 版本：`0.1.5-rc.2`（`package.json` 的 `engines.dsh` 声明为 `^0.1.5-rc.1`）。
+> 早于 `0.1.5` 的 DSH 不兼容——`0.1.5` 移除了本插件旧版依赖的 `installSettingsSection`
+> 与 `@deepseek-ai/dsh-client-runtime`。
 
 ```bash
 dsh plugin --profile web add @deepseek-ai/dsh-auto-continue@<version>
