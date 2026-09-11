@@ -1,7 +1,5 @@
 import Schema from '@deepseek-ai/schemastery'
 
-export const DEFAULT_PLATFORM = 'zenmux'
-export const DEFAULT_PLATFORM_BASE_URL = 'https://zenmux.ai'
 export const DEFAULT_RESUME_NOTICE_TEMPLATE =
   '因额度限制，本次请求等待了 {hours} 小时 {minutes} 分钟后重新发送。'
 
@@ -40,10 +38,18 @@ export interface PostResetRetryConfig {
   delaysMs: number[]
 }
 
-/** 一个平台实例：由平台模板生成，承载账号与恢复策略相关的全部字段。 */
+/**
+ * 一个平台实例：由平台模板生成，承载账号与恢复策略相关的全部字段。
+ * 平台专属字段一律放 `options`（由对应适配器的 `optionsSchema` 校验），
+ * 通用配置模块不需要认识任何具体平台。
+ */
 export interface PlatformInstanceConfig {
-  /** 平台模板标识；v1 仅支持 `zenmux`。 */
+  /** 平台模板标识（已注册平台适配器的 `platform`）。必填。 */
   type: string
+  /** 实例级平台端点覆盖；留空则用适配器默认端点或全局 legacy 覆盖。 */
+  baseURL?: string
+  /** 平台专属参数；结构由对应适配器的 `optionsSchema` 决定。 */
+  options?: Record<string, unknown>
   /** 管理密钥引用（环境变量名/凭据存储引用）。schema 支持，v1 UI 不展示。 */
   managementKeyRef?: string
   /** 明文管理密钥。v1 UI 以明文 secret 编辑，不回显。 */
@@ -56,7 +62,11 @@ export interface PlatformInstanceConfig {
 
 /** 插件顶层配置（schema 校验并填好默认值后的形态）。 */
 export interface Config {
-  /** 平台 API base URL。v1 全局唯一，不在实例中。 */
+  /**
+   * 平台 API base URL。**legacy 全局覆盖**：非空时对所有实例生效，
+   * 优先级低于实例级 `baseURL`、高于适配器的 `defaultBaseURL`。
+   * 新配置建议留空、改用适配器默认端点或实例级 `baseURL`。
+   */
   platformBaseURL: string
   /** 平台实例集合，默认空。 */
   platformInstances: Record<string, PlatformInstanceConfig>
@@ -65,7 +75,10 @@ export interface Config {
 }
 
 const instanceSchema = Schema.object({
-  type: Schema.string().default(DEFAULT_PLATFORM),
+  // 平台标识必填：不再默认成某个具体平台，避免“忘写 type 就静默落到某个默认平台”。
+  type: Schema.string().required(),
+  baseURL: Schema.string(),
+  options: Schema.dict(Schema.any()).default({}),
   managementKeyRef: Schema.string().pattern(MANAGEMENT_KEY_REF_PATTERN),
   managementKey: Schema.string().role('secret'),
   resumeNotice: Schema.object({
@@ -87,7 +100,7 @@ const instanceSchema = Schema.object({
 })
 
 export const Config = Schema.object({
-  platformBaseURL: Schema.string().default(DEFAULT_PLATFORM_BASE_URL),
+  platformBaseURL: Schema.string().default(''),
   platformInstances: Schema.dict(instanceSchema),
   providerBindings: Schema.dict(Schema.string()),
 }) as unknown as Schema<Config>
@@ -97,14 +110,41 @@ export function instanceHasCredential(instance: PlatformInstanceConfig): boolean
   return !!(instance.managementKeyRef || instance.managementKey)
 }
 
+/** 归一化实例的平台专属参数（schema 默认 `{}`，直接构造的对象可能省略）。 */
+export function instanceOptions(instance: PlatformInstanceConfig): Record<string, unknown> {
+  return instance.options ?? {}
+}
+
+/** 判断一个实例是否显式覆盖了平台端点。 */
+export function instanceBaseURL(instance: PlatformInstanceConfig): string | undefined {
+  const value = instance.baseURL?.trim()
+  return value === undefined || value === '' ? undefined : value
+}
+
+export interface ValidateConfigOptions {
+  /**
+   * 把“未知平台类型”收集到该数组而不是立即抛错。
+   * 插件加载期使用：平台适配器可能由**稍后加载**的插件注册，构造期无法判定；
+   * settings 写入路径不传本项，保持 fail loud。
+   */
+  deferUnknownPlatforms?: string[]
+  /**
+   * 平台专属参数校验（来自适配器的 `optionsSchema`）；抛错即视为配置非法。
+   * 未注册的（被 defer 的）平台不会调用本回调。
+   */
+  validateOptions?: (platform: string, instanceId: string, options: Record<string, unknown>) => void
+}
+
 /**
- * 跨字段校验（§6.3）。用于插件加载（base 层 fail loud）与 settings 写入。
+ * 跨字段校验（§6.3）。用于插件加载与 settings 写入。
  * @param config 已通过 schema 校验的解析值。
- * @param registeredPlatforms 已注册的平台模板名集合（v1 仅 `zenmux`）。
+ * @param registeredPlatforms 已注册的平台模板名集合。
+ * @param options 加载期放宽项与平台专属校验钩子，见 {@link ValidateConfigOptions}。
  */
 export function validateConfig(
   config: Config,
   registeredPlatforms: ReadonlySet<string>,
+  options: ValidateConfigOptions = {},
 ): void {
   for (const [instanceId, instance] of Object.entries(config.platformInstances)) {
     if (!INSTANCE_ID_PATTERN.test(instanceId)) {
@@ -112,16 +152,26 @@ export function validateConfig(
         `dsh-auto-continue: instance id "${instanceId}" must match ${INSTANCE_ID_PATTERN}`,
       )
     }
-    if (!registeredPlatforms.has(instance.type)) {
-      throw new TypeError(
-        `dsh-auto-continue: instance "${instanceId}" has unknown platform type "${instance.type}"`,
-      )
-    }
+    // 平台是否已注册只影响“类型检查 + 专属参数校验”，其余结构规则一律照常 fail loud。
+    const platformKnown = registeredPlatforms.has(instance.type)
     if (instance.managementKeyRef && instance.managementKey) {
       throw new TypeError(
         `dsh-auto-continue: instance "${instanceId}" cannot set both managementKeyRef and managementKey`,
       )
     }
+    const baseURL = instanceBaseURL(instance)
+    if (baseURL !== undefined && !/^https?:\/\//.test(baseURL)) {
+      throw new TypeError(
+        `dsh-auto-continue: instance "${instanceId}" baseURL must be an http(s) URL`,
+      )
+    }
+    const instanceOpts = instanceOptions(instance)
+    if (typeof instanceOpts !== 'object' || Array.isArray(instanceOpts)) {
+      throw new TypeError(
+        `dsh-auto-continue: instance "${instanceId}" options must be a plain object`,
+      )
+    }
+    if (platformKnown) options.validateOptions?.(instance.type, instanceId, instanceOpts)
     const { initialDelayMs, maxDelayMs, totalTimeoutMs } = instance.statsRetry
     for (const [field, value] of [
       ['statsRetry.initialDelayMs', initialDelayMs],
@@ -142,6 +192,14 @@ export function validateConfig(
       throw new TypeError(
         `dsh-auto-continue: instance "${instanceId}" resetBufferMs must be a non-negative integer`,
       )
+    }
+    if (!platformKnown) {
+      if (!options.deferUnknownPlatforms) {
+        throw new TypeError(
+          `dsh-auto-continue: instance "${instanceId}" has unknown platform type "${instance.type}"`,
+        )
+      }
+      options.deferUnknownPlatforms.push(instance.type)
     }
   }
 

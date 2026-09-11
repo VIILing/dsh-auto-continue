@@ -7,7 +7,13 @@ import {
   matchesQuotaExhausted,
   resolveWaitTarget,
 } from '../../src/platforms/zenmux.ts'
-import { isWindowExhausted, type PlatformQuotaSnapshot, type QuotaWindow } from '../../src/platform.ts'
+import {
+  isWindowExhausted,
+  type PlatformQuotaAdapter,
+  type PlatformQuotaSnapshot,
+  type QuotaFetchContext,
+  type QuotaWindow,
+} from '../../src/platform.ts'
 
 function failure(message: string, status?: number): LlmFailure {
   return { message, code: 'QUOTA', ...(status === undefined ? {} : { status }) }
@@ -21,7 +27,38 @@ function snapshot(w5: QuotaWindow, w7: QuotaWindow): PlatformQuotaSnapshot {
   return { windows: [w5, w7] }
 }
 
+/** 构造 fetchQuota 的调用上下文（v3 起适配器接收上下文对象）。 */
+function fetchContext(baseURL: string, credential = 'cred'): QuotaFetchContext {
+  return {
+    credential,
+    baseURL,
+    instance: {
+      type: 'zenmux',
+      options: {},
+      resumeNotice: { enabled: false, template: '{hours} {minutes}' },
+      statsRetry: { initialDelayMs: 60000, maxDelayMs: 900000, totalTimeoutMs: 3600000 },
+      postResetRetry: { delaysMs: [60000] },
+      resetBufferMs: 5000,
+    },
+    signal: new AbortController().signal,
+  }
+}
+
 const adapter = new ZenMuxAdapter()
+
+describe('ZenMux 平台元信息', () => {
+  it('自带展示名与默认端点（UI 下拉与端点解析都从适配器读取）', () => {
+    expect(adapter.platform).toBe('zenmux')
+    expect(adapter.label).toBe('ZenMux')
+    expect(adapter.defaultBaseURL).toBe('https://zenmux.ai')
+  })
+
+  it('未声明 optionsSchema / isExhausted（沿用通用判定）', () => {
+    const asInterface: PlatformQuotaAdapter = adapter
+    expect(asInterface.optionsSchema).toBeUndefined()
+    expect(asInterface.isExhausted).toBeUndefined()
+  })
+})
 
 describe('ZenMux 错误识别 (matchesQuotaExhausted)', () => {
   it('命中 quote_exceeded 纯文本', () => {
@@ -210,21 +247,21 @@ describe('ZenMux fetchQuota', () => {
       status: 200,
       json: async () => body,
     })))
-    const snap = await adapter.fetchQuota('cred', 'https://zenmux.ai', new AbortController().signal)
+    const snap = await adapter.fetchQuota(fetchContext('https://zenmux.ai'))
     expect(snap.windows.map((w) => w.name)).toEqual(['5h', '7d'])
   })
 
   it('非 200 抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 500, json: async () => ({}) })))
     await expect(
-      adapter.fetchQuota('cred', 'https://zenmux.ai', new AbortController().signal),
+      adapter.fetchQuota(fetchContext('https://zenmux.ai')),
     ).rejects.toThrow()
   })
 
   it('success !== true 抛错', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, json: async () => ({ success: false }) })))
     await expect(
-      adapter.fetchQuota('cred', 'https://zenmux.ai', new AbortController().signal),
+      adapter.fetchQuota(fetchContext('https://zenmux.ai')),
     ).rejects.toThrow()
   })
 })
@@ -286,7 +323,7 @@ describe('黄金样本：真实 ZenMux 统计响应回归 (§8.3)', () => {
     }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const snap = await adapter.fetchQuota('mgmt-key', 'https://zenmux.ai', new AbortController().signal)
+    const snap = await adapter.fetchQuota(fetchContext('https://zenmux.ai', 'mgmt-key'))
     expect(snap.windows.map((w) => `${w.name}:${w.usagePercentage}`)).toEqual(['5h:0.0196', '7d:0.1088'])
     expect(fetchMock).toHaveBeenCalledWith(
       'https://zenmux.ai/api/v1/management/subscription/detail',

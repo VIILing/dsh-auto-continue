@@ -148,6 +148,17 @@ describe('自建 /auto-continue/api 路由', () => {
     expect(body.value).toEqual([{ id: 'p1', name: 'p1' }])
   })
 
+  it('platforms.list 返回已注册平台模板元信息（UI 下拉数据源）', async () => {
+    const { routes } = await mount()
+
+    const res = fakeRes()
+    await routes[0].handler(fakeReq('platforms.list', {}), res)
+    expect(res.status).toBe(200)
+    const body = JSON.parse(res.body) as { ok: boolean; value: Array<{ id: string; label: string }> }
+    expect(body.ok).toBe(true)
+    expect(body.value).toEqual([{ id: 'zenmux', label: 'ZenMux' }])
+  })
+
   it('非 loopback/受信 Host 被拒绝', async () => {
     const { routes } = await mount()
     const req = fakeReq('settings.get', {})

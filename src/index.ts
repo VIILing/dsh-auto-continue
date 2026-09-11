@@ -11,13 +11,14 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   Config,
   STATS_REQUEST_TIMEOUT_MS,
+  instanceBaseURL,
   validateConfig,
   type Config as ConfigType,
   type PlatformInstanceConfig,
 } from './config.ts'
 import { buildResumeNotice } from './notice.ts'
-import type { PlatformQuotaAdapter } from './platform.ts'
-import { ZenMuxAdapter } from './platforms/zenmux.ts'
+import { describePlatform, type PlatformDescriptor, type PlatformQuotaAdapter } from './platform.ts'
+import { builtinPlatformAdapters } from './platforms/index.ts'
 import {
   abortableDelay,
   decideWaitAction,
@@ -66,6 +67,8 @@ export default class QuotaRuntime extends Service {
   private readonly adapters = new Map<string, PlatformQuotaAdapter>()
   private readonly states = new Map<string, InstanceRuntimeState>()
   private readonly lifetime = new AbortController()
+  /** 已提示过“全局 baseURL 覆盖适配器默认端点”的实例（每个实例只提示一次）。 */
+  private readonly warnedBaseURLOverride = new Set<string>()
   private currentConfig: () => ConfigType
 
   constructor(ctx: Context, config: ConfigType) {
@@ -73,11 +76,26 @@ export default class QuotaRuntime extends Service {
     this.logger = ctx.logger('auto-continue')
     this.currentConfig = () => config
 
-    // 注册内置平台模板（v1 仅 zenmux）。
-    this.adapters.set('zenmux', new ZenMuxAdapter())
+    // 注册内置平台模板（清单在 platforms/index.ts；新增内置平台不改本文件）。
+    for (const adapter of builtinPlatformAdapters()) {
+      this.adapters.set(adapter.platform, adapter)
+    }
 
-    // base 层 fail loud 校验。
-    validateConfig(config, this.platformNames())
+    // 加载期校验：结构规则 fail loud；未知平台类型**延后**判定，因为适配器可能由
+    // 稍后加载的平台插件注册（第三方扩展点 registerPlatformAdapter）。
+    const deferred: string[] = []
+    validateConfig(config, this.platformNames(), {
+      deferUnknownPlatforms: deferred,
+      validateOptions: (platform, instanceId, options) => {
+        this.validatePlatformOptions(platform, instanceId, options)
+      },
+    })
+    if (deferred.length > 0) {
+      this.logger.warn(
+        'dsh-auto-continue: platform type(s) %s are not registered yet; instances of them stay inactive until a platform plugin registers an adapter',
+        [...new Set(deferred)].join(', '),
+      )
+    }
 
     // 可选 settings 接入：settings 服务存在时，entry config 作为 base 层。
     // DSH 0.1.5 起自由函数 installSettingsSection 被移除，改为
@@ -90,7 +108,12 @@ export default class QuotaRuntime extends Service {
         onChange: () => {
           this.reconcileInstances()
         },
-        validate: (value) => validateConfig(value, this.platformNames()),
+        // settings 写入路径是**严格**的：此刻所有插件已加载完，未知平台类型必须报错。
+        validate: (value) => validateConfig(value, this.platformNames(), {
+          validateOptions: (platform, instanceId, options) => {
+            this.validatePlatformOptions(platform, instanceId, options)
+          },
+        }),
       })
     })
 
@@ -164,7 +187,31 @@ export default class QuotaRuntime extends Service {
     return this.status(instanceId)
   }
 
-  /** 注册一个平台模板（未来扩展）。 */
+  /**
+   * 已注册平台模板的公开元信息，按 id 排序（UI 平台下拉的数据源）。
+   */
+  platforms(): PlatformDescriptor[] {
+    return [...this.adapters.values()]
+      .map(describePlatform)
+      .sort((a, b) => a.id.localeCompare(b.id))
+  }
+
+  /**
+   * 注册一个平台模板——**第三方接入新平台的唯一入口**。
+   *
+   * 用法（独立插件，无需修改本插件任何文件）：
+   * ```ts
+   * ctx.inject(['quota'], (c) => c.quota.registerPlatformAdapter(new MyAdapter()))
+   * ```
+   * 注册后：`platforms()` / UI 下拉自动出现该平台；实例可用 `type: <platform>`
+   * 引用它（含 `cordis.yml` base 层声明——加载期对未知平台只告警不抛错）；
+   * 端点由适配器 `defaultBaseURL` 或实例 `baseURL` 决定，互不干扰。
+   *
+   * 适配器的生命周期挂在 quota 服务上：注册方若可能先于本插件卸载，请调用返回的 disposer，
+   * 或在自己的 `ctx.effect(() => ctx.quota.registerPlatformAdapter(adapter))` 中包一层。
+   *
+   * @returns 注销函数；注销后该平台立即不再被判定链解析。
+   */
   registerPlatformAdapter(adapter: PlatformQuotaAdapter): () => void {
     const dispose = this.ctx.effect(() => {
       this.adapters.set(adapter.platform, adapter)
@@ -179,6 +226,53 @@ export default class QuotaRuntime extends Service {
 
   private platformNames(): Set<string> {
     return new Set(this.adapters.keys())
+  }
+
+  /** 用适配器声明的 `optionsSchema` 校验实例的平台专属参数（fail loud）。 */
+  private validatePlatformOptions(
+    platform: string,
+    instanceId: string,
+    options: Record<string, unknown>,
+  ): void {
+    const schema = this.adapters.get(platform)?.optionsSchema
+    if (schema === undefined) return
+    try {
+      schema(options)
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      throw new TypeError(
+        `dsh-auto-continue: instance "${instanceId}" has invalid options for platform "${platform}": ${detail}`,
+      )
+    }
+  }
+
+  /**
+   * 解析实例的实际平台端点。优先级：
+   * `instance.baseURL` → 全局 `platformBaseURL`（legacy，非空时） → `adapter.defaultBaseURL`。
+   * 都无法确定时返回 undefined（调用方 fail safe 到 `next()`）。
+   */
+  private resolveBaseURL(
+    instance: PlatformInstanceConfig,
+    adapter: PlatformQuotaAdapter,
+  ): string | undefined {
+    const override = instanceBaseURL(instance)
+    if (override !== undefined) return override
+
+    const global = this.currentConfig().platformBaseURL.trim()
+    if (global !== '') {
+      const adapterDefault = adapter.defaultBaseURL
+      if (adapterDefault !== undefined && adapterDefault !== global && !this.warnedBaseURLOverride.has(instance.type)) {
+        this.warnedBaseURLOverride.add(instance.type)
+        this.logger.warn(
+          'dsh-auto-continue: global platformBaseURL "%s" overrides the "%s" adapter default "%s"; prefer a per-instance baseURL when several platforms are in use',
+          global,
+          adapter.platform,
+          adapterDefault,
+        )
+      }
+      return global
+    }
+    return adapter.defaultBaseURL
   }
 
   private reconcileInstances(): void {
@@ -261,8 +355,20 @@ export default class QuotaRuntime extends Service {
       return next()
     }
 
+    // 解析平台端点（按 instance）。
+    const baseURL = this.resolveBaseURL(instance, adapter)
+    if (baseURL === undefined) {
+      this.logger.warn(
+        'dsh-auto-continue: instance "%s" has no resolvable base URL (platform "%s" declares no default and platformBaseURL is empty); not continuing',
+        state.instanceId,
+        adapter.platform,
+      )
+      this.transition(state, { phase: 'idle' })
+      return next()
+    }
+
     // 统计查询（单飞，按 instance）。
-    const result = await this.fetchStatsSingleFlight(state, instance, adapter, credential, signal)
+    const result = await this.fetchStatsSingleFlight(state, instance, adapter, credential, baseURL, signal)
     if (!result.ok) {
       if (result.aborted) return undefined
       this.transition(state, { phase: 'disabled' })
@@ -304,13 +410,15 @@ export default class QuotaRuntime extends Service {
     instance: PlatformInstanceConfig,
     adapter: PlatformQuotaAdapter,
     credential: string,
+    baseURL: string,
     _signal: AbortSignal,
   ): Promise<StatsFetchResult> {
     if (!state.statsFlight) {
       state.statsFlight = fetchStatsWithRetry({
         adapter,
         credential,
-        baseURL: this.currentConfig().platformBaseURL,
+        baseURL,
+        instance,
         statsRetry: instance.statsRetry,
         statsRequestTimeoutMs: STATS_REQUEST_TIMEOUT_MS,
         logger: this.logger,
@@ -443,6 +551,11 @@ export default class QuotaRuntime extends Service {
     if (method === 'providers.list') {
       const llm = sctx.get('llm')
       return llm === undefined ? [] : llm.listProviders()
+    }
+
+    // 已注册平台模板（含第三方插件注册的），供 UI 平台下拉数据驱动渲染。
+    if (method === 'platforms.list') {
+      return this.platforms()
     }
 
     const settings = sctx.get('settings')

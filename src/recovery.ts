@@ -1,6 +1,6 @@
-import type { StatsRetryConfig } from './config.ts'
+import type { PlatformInstanceConfig, StatsRetryConfig } from './config.ts'
 import {
-  isSnapshotExhausted,
+  isExhaustedBy,
   type PlatformQuotaAdapter,
   type PlatformQuotaSnapshot,
 } from './platform.ts'
@@ -19,6 +19,7 @@ export interface FetchStatsOptions {
   adapter: PlatformQuotaAdapter
   credential: string
   baseURL: string
+  instance: PlatformInstanceConfig
   statsRetry: StatsRetryConfig
   statsRequestTimeoutMs: number
   logger: {
@@ -65,11 +66,12 @@ async function fetchOnce(
   adapter: PlatformQuotaAdapter,
   credential: string,
   baseURL: string,
+  instance: PlatformInstanceConfig,
   requestTimeoutMs: number,
   lifetimeSignal: AbortSignal,
 ): Promise<PlatformQuotaSnapshot> {
   const signal = AbortSignal.any([lifetimeSignal, AbortSignal.timeout(requestTimeoutMs)])
-  return adapter.fetchQuota(credential, baseURL, signal)
+  return adapter.fetchQuota({ credential, baseURL, instance, signal })
 }
 
 /**
@@ -79,14 +81,14 @@ async function fetchOnce(
  * （单飞查询跨调用方共享）。
  */
 export async function fetchStatsWithRetry(options: FetchStatsOptions): Promise<StatsFetchResult> {
-  const { adapter, credential, baseURL, statsRetry, statsRequestTimeoutMs, logger, lifetimeSignal } = options
+  const { adapter, credential, baseURL, instance, statsRetry, statsRequestTimeoutMs, logger, lifetimeSignal } = options
   const { initialDelayMs, maxDelayMs, totalTimeoutMs } = statsRetry
   const deadline = Date.now() + totalTimeoutMs
   let delay = initialDelayMs
 
   try {
     const snapshot = await fetchOnce(
-      adapter, credential, baseURL, statsRequestTimeoutMs, lifetimeSignal,
+      adapter, credential, baseURL, instance, statsRequestTimeoutMs, lifetimeSignal,
     )
     return { ok: true, snapshot }
   } catch (error) {
@@ -107,7 +109,7 @@ export async function fetchStatsWithRetry(options: FetchStatsOptions): Promise<S
 
     try {
       const snapshot = await fetchOnce(
-        adapter, credential, baseURL, statsRequestTimeoutMs, lifetimeSignal,
+        adapter, credential, baseURL, instance, statsRequestTimeoutMs, lifetimeSignal,
       )
       return { ok: true, snapshot }
     } catch (error) {
@@ -138,7 +140,8 @@ export function decideWaitAction(options: {
   if (resetsAtMs === null) return { type: 'missing-info' }
 
   const waitTarget = resetsAtMs + resetBufferMs
-  const exhausted = isSnapshotExhausted(snapshot)
+  // 耗尽口径优先由平台适配器决定（isExhausted），否则用通用默认口径。
+  const exhausted = isExhaustedBy(adapter, snapshot)
   const shouldWaitReset = waitTarget > now && (exhausted || !episodeWaitedReset)
 
   if (shouldWaitReset) return { type: 'waiting-reset', resetAt: waitTarget }

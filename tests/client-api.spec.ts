@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   buildInstanceDelete,
   buildInstanceEdit,
+  isValidBaseURLInput,
+  listPlatforms,
+  parseOptionsJson,
   updateSettings,
   type AutoContinueSection,
 } from '../src/client/api.ts'
@@ -56,5 +59,39 @@ describe('client settings api', () => {
     expect(next.platformInstances.zm).toBeUndefined()
     expect(next.platformInstances.other).toBeDefined()
     expect(next.providerBindings).toEqual({ p2: 'other' })
+  })
+
+  it('listPlatforms 走 fenced 路由的 platforms.list 方法', async () => {
+    const captured: { url?: string } = {}
+    vi.stubGlobal('fetch', async (url: string) => {
+      captured.url = url
+      return {
+        ok: true,
+        json: async () => ({ ok: true, value: [{ id: 'demo', label: 'Demo Platform' }] }),
+      } as unknown as Response
+    })
+
+    const platforms = await listPlatforms()
+    expect(captured.url).toBe('/auto-continue/api/platforms.list')
+    expect(platforms).toEqual([{ id: 'demo', label: 'Demo Platform' }])
+  })
+
+  it('parseOptionsJson：留空 = {}，非法 JSON / 非对象 = null', () => {
+    expect(parseOptionsJson('')).toEqual({})
+    expect(parseOptionsJson('   ')).toEqual({})
+    expect(parseOptionsJson('{"region":"eu"}')).toEqual({ region: 'eu' })
+    expect(parseOptionsJson('[1,2]')).toBeNull()
+    expect(parseOptionsJson('null')).toBeNull()
+    expect(parseOptionsJson('"text"')).toBeNull()
+    expect(parseOptionsJson('{oops')).toBeNull()
+  })
+
+  it('isValidBaseURLInput：留空合法，非空需 http(s)', () => {
+    expect(isValidBaseURLInput('')).toBe(true)
+    expect(isValidBaseURLInput('  ')).toBe(true)
+    expect(isValidBaseURLInput('https://proxy.internal')).toBe(true)
+    expect(isValidBaseURLInput('http://localhost:8080')).toBe(true)
+    expect(isValidBaseURLInput('proxy.internal')).toBe(false)
+    expect(isValidBaseURLInput('ftp://x')).toBe(false)
   })
 })

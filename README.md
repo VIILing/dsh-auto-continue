@@ -13,11 +13,15 @@ DeepSeek Harness 的“配额耗尽自动续跑”插件。当某个 provider �
 
 ```
 Platform Adapter（平台模板）
-  └─ type: "zenmux"（v1 仅内置 zenmux 一个模板）
+  └─ 实现 PlatformQuotaAdapter 的类，如 "zenmux"（内置清单见 src/platforms/index.ts）
+  └─ 自带元信息：label（UI 展示名）、defaultBaseURL（默认端点）、
+     optionsSchema（平台专属参数校验）、isExhausted（可选，自定义“耗尽”口径）
 
 Platform Instance（平台实例）
   └─ id: "zenmux-main"（用户定义）
-  └─ type: "zenmux"（由哪个模板生成）
+  └─ type: "zenmux"（由哪个模板生成，必填）
+  └─ baseURL（可选，实例级端点覆盖）
+  └─ options（平台专属参数，结构由所选模板定义）
   └─ managementKeyRef / managementKey、resumeNotice、statsRetry、postResetRetry、resetBufferMs
 
 Provider（DSH 中的 LLM 路由）
@@ -26,7 +30,32 @@ Provider（DSH 中的 LLM 路由）
 ```
 
 恢复状态、`disabled`、统计查询单飞均按 **platform instance** 键控；同实例的多个
-provider 共享同一恢复状态。
+provider 共享同一恢复状态。一个实例只属于一个平台模板，因此**多个平台可以并存**：
+端点由模板自带、平台专属参数由模板校验，通用代码不认识任何具体平台。
+
+## 新增一个平台模板
+
+**内置平台**：新建 `src/platforms/<name>.ts` 实现 `PlatformQuotaAdapter`，然后在
+`src/platforms/index.ts` 的 `builtinPlatformAdapters()` 里追加一行。状态机、设置、
+UI、路由都不需要改动——UI 的平台下拉从 `ctx.quota.platforms()` 读取。
+
+**第三方平台**（不改本插件任何文件）：在自己的插件里注册即可。设计要求（为什么必须做到
+"不改动其他代码"，以及接口契约要保证什么）见
+[`doc/设计文档/平台模板设计约束.md`](doc/设计文档/平台模板设计约束.md)。
+
+```ts
+ctx.inject(['quota'], (c) => c.quota.registerPlatformAdapter(new MyPlatformAdapter()))
+```
+
+注册之后：
+
+- `type: <platform>` 的实例（含 `cordis.yml` base 层声明）立刻可用；
+- UI 的平台下拉自动出现该模板（数据来自 `/auto-continue/api/platforms.list`）；
+- 端点用适配器的 `defaultBaseURL`，或实例级 `baseURL` 覆盖；
+- 平台专属参数写在实例的 `options` 里，由适配器 `optionsSchema` 校验。
+
+> 加载期对**尚未注册**的平台类型只告警、不抛错（平台插件可能稍后加载）；
+> settings 写入路径是严格的，此时写未知平台类型会直接报错。
 
 ## 安装与启用
 
@@ -35,12 +64,13 @@ provider 共享同一恢复状态。
 - id: auto-continue
   name: '@deepseek-ai/dsh-auto-continue'
   config:
-    platformBaseURL: https://zenmux.ai
     platformInstances:
       zenmux-main:
         type: zenmux
         managementKeyRef: ZENMUX_MANAGEMENT_API_KEY
         # managementKey: sk-xxxx
+        # baseURL: https://proxy.internal   # 可选，覆盖模板默认端点
+        # options: {}                       # 可选，平台专属参数
         resumeNotice:
           enabled: false
           template: "因额度限制，本次请求等待了 {hours} 小时 {minutes} 分钟后重新发送。"
@@ -56,6 +86,7 @@ provider 共享同一恢复状态。
 ```
 
 默认 `platformInstances: {}`、`providerBindings: {}`（空实例，全部由 UI 新建）。
+`platformBaseURL` 可省略：平台端点默认由各自模板的 `defaultBaseURL` 提供。
 
 ## 配置字段
 
@@ -63,7 +94,7 @@ provider 共享同一恢复状态。
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `platformBaseURL` | string | `"https://zenmux.ai"` | 平台 API base URL。v1 全局唯一，不在实例中 |
+| `platformBaseURL` | string | `""` | **legacy 全局覆盖**：非空时对所有实例生效（优先级低于实例级 `baseURL`、高于模板 `defaultBaseURL`）。新配置建议留空，改用模板默认端点或实例级 `baseURL` |
 
 ### `platformInstances`（map，默认 `{}`）
 
@@ -71,7 +102,9 @@ provider 共享同一恢复状态。
 
 | 字段 | 类型 | 默认 | 说明 |
 |---|---|---|---|
-| `type` | string | `"zenmux"` | 平台模板标识。v1 仅 `zenmux` |
+| `type` | string | **必填** | 平台模板标识（已注册适配器的 `platform`）。不再默认成某个具体平台 |
+| `baseURL` | string | 无 | 实例级平台端点覆盖；留空用模板 `defaultBaseURL` |
+| `options` | object | `{}` | 平台专属参数；结构由所选模板的 `optionsSchema` 校验 |
 | `managementKeyRef` | string | 无 | 管理密钥引用（env/凭据存储引用）。schema 支持，v1 UI 不展示 |
 | `managementKey` | string | 无 | 明文管理密钥。`role('secret')`，UI 不回显 |
 | `resumeNotice.enabled` | boolean | `false` | 是否在重发前注入提示 |
@@ -89,24 +122,25 @@ provider 共享同一恢复状态。
 - 一个 provider 只能绑定一个 instance；一个 instance 可被多个 provider 绑定。
 - 值为空或未出现在 `platformInstances` 中：配置校验失败。
 
-跨字段校验（fail loud）：实例 id 格式、`type` 为已注册模板、`managementKeyRef` 与
-`managementKey` 互斥、`providerBindings` 指向存在的实例、`postResetRetry.delaysMs`
-非空正整数、`statsRetry` 三字段为正整数。
+跨字段校验（fail loud）：实例 id 格式、`type` 为已注册模板（settings 写入路径）、
+`managementKeyRef` 与 `managementKey` 互斥、`baseURL` 为 http(s)、
+`options` 为普通对象且通过模板 `optionsSchema`、`providerBindings` 指向存在的实例、
+`postResetRetry.delaysMs` 非空正整数、`statsRetry` 三字段为正整数。
 
 ## Settings 接入
 
 插件通过 `ctx.inject(['settings'], sctx => sctx.settings.installSection(ctx, 'auto-continue', Config, entry, hooks))`
 注册 settings namespace `auto-continue`；`cordis.yml` 的 `config` 作为 base 层，UI 修改写入
-user 层。`managementKey` 标记 `role('secret')`，线路上不回显。设置变更语义见需求 v2 §4.1。
+user 层。`managementKey` 标记 `role('secret')`，线路上不回显。设置变更语义见 `doc/设计文档/配置与设置设计.md` §9。
 
 > DSH `0.1.5` 起，旧自由函数 `installSettingsSection()` / `settingsNamespace()` 已被移除，
 > 改用 `SettingsProvider.installSection()`；本插件已按新 API 迁移（见
-> `doc/DSH-0.1.5-升级影响评估.md`）。
+> `doc/记录/DSH-0.1.5-升级影响评估.md`）。
 
 此外插件注册一个自建的 fenced HTTP 路由 `/auto-continue/api`（`ctx.webServer.register` +
 trust-fence），暴露 `settings.get`（脱敏）/ `settings.update`（replace 前回注 secret，实现
-密码「留空不修改」）/ `providers.list`，供浏览器侧卡片读写设置——不依赖 DSH settings RPC
-的命名空间 allowlist。
+密码「留空不修改」）/ `providers.list` / `platforms.list`，供浏览器侧卡片读写设置——不依赖
+DSH settings RPC 的命名空间 allowlist。
 
 ## 服务与事件
 
@@ -114,7 +148,8 @@ trust-fence），暴露 `settings.get`（脱敏）/ `settings.update`（replace 
   - `status(instanceId)`：获取 instance 状态快照。
   - `isDisabled(instanceId)`：该 instance 是否已放弃自动续跑。
   - `statusForProvider(providerId)`：调试/查询便捷方法。
-  - `registerPlatformAdapter(adapter)`：注册平台模板（未来扩展）。
+  - `platforms()`：已注册平台模板的元信息（`{ id, label }[]`，按 id 排序），UI 下拉的数据源。
+  - `registerPlatformAdapter(adapter)`：**注册平台模板——第三方新增平台的入口**，返回注销函数。
 - 事件：`quota/changed(instanceId, state, affectedProviders)`：按 instance 发布，
   payload 携带 instance id、状态与受影响 provider 列表。
 
@@ -132,18 +167,43 @@ type QuotaInstanceState =
 
 ## 平台适配器
 
-插件采用“平台模板 + 通用恢复状态机”结构。任何能提供配额统计接口的 LLM 服务商，
-实现 `PlatformQuotaAdapter` 并调用 `ctx.quota.registerPlatformAdapter(adapter)` 注册，
-即可复用同一套恢复流程。
+插件采用“平台模板 + 通用恢复状态机”结构。任何能提供配额查询接口的 LLM 服务商，
+实现 `PlatformQuotaAdapter` 并注册，即可复用同一套恢复流程，**状态机、设置、UI 都不用改**。
+平台特有的默认端点、专属参数与“耗尽”口径都由适配器自己声明。
+设计规格见 `doc/设计文档/平台适配器设计.md`，硬性要求见 `doc/设计文档/平台模板设计约束.md`：
 
 ```ts
 interface PlatformQuotaAdapter {
+  /** 平台模板标识（= 实例 type）。必填。 */
   readonly platform: string
+  /** UI 展示名；缺省回退到 platform。 */
+  readonly label?: string
+  /** 该平台默认 API 端点；实例 baseURL 可覆盖，全局 platformBaseURL 为 legacy 覆盖。 */
+  readonly defaultBaseURL?: string
+  /** 平台专属参数（instance.options）的 schema；声明后写入设置时 fail loud 校验。 */
+  readonly optionsSchema?: Schema<Record<string, unknown>>
+
+  /** 判断一个 LlmFailure 是否为本平台的“配额耗尽”错误。 */
   matchesQuotaExhausted(failure: LlmFailure): boolean
-  fetchQuota(credential: string, baseURL: string, signal: AbortSignal): Promise<PlatformQuotaSnapshot>
+  /** 请求平台统计接口。上下文含 credential / baseURL / instance / signal。 */
+  fetchQuota(context: QuotaFetchContext): Promise<PlatformQuotaSnapshot>
+  /** 根据归一化快照计算“重置时刻”（epoch ms）；无法计算时返回 null。 */
   resolveWaitTarget(snapshot: PlatformQuotaSnapshot): number | null
+  /** 可选：覆盖通用“耗尽”判定口径。 */
+  isExhausted?(snapshot: PlatformQuotaSnapshot): boolean
+}
+
+interface QuotaFetchContext {
+  readonly credential: string
+  readonly baseURL: string
+  readonly instance: PlatformInstanceConfig  // 平台专属参数在这里（instance.options）
+  readonly signal: AbortSignal
 }
 ```
+
+归一化快照：`{ windows: { name, usagePercentage, remainingFlows, resetsAt }[] }`；
+通用“耗尽”判定为 `usagePercentage >= 1 || remainingFlows <= 0`，无法用该口径表达的平台
+实现 `isExhausted` 即可。端到端接入验证见 `tests/platforms/contract.spec.ts`。
 
 ## Client UI
 
@@ -177,9 +237,10 @@ factory})` 注册，CSS Module 内联注入 `<style data-plugin>`），host 半�
 ## 未来扩展点
 
 1. **Provider 切换**：监听 `quota/changed`，在 `agent/request` 瀑布中改写 provider 路由。
-2. **新平台模板**：实现并注册 `PlatformQuotaAdapter`，不改恢复状态机。
-3. **系统消息升级**：若 DSH core 未来支持 `system/message` surface 事件，`resumeNotice`
-   可从 user 角色切换为 system 角色。
+2. **新平台模板**：实现 `PlatformQuotaAdapter` 并注册（`ctx.quota.registerPlatformAdapter`），
+   不改恢复状态机；端点、专属参数与“耗尽”口径都由适配器自带（见「新增一个平台模板」）。
+3. **系统消息升级**：DSH `0.1.5` 起已支持 `system/message` surface 事件，`resumeNotice`
+   可从 user 角色切换为 system 角色（本插件当前仍用 user 角色）。
 
 ## 安装与挂载
 

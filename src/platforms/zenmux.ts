@@ -3,9 +3,13 @@ import {
   isWindowExhausted,
   type PlatformQuotaAdapter,
   type PlatformQuotaSnapshot,
+  type QuotaFetchContext,
   type QuotaWindow,
 } from '../platform.ts'
 import { parseResetsAt } from '../state.ts'
+
+/** ZenMux 官方 API 端点（适配器自带默认值；实例可用 `baseURL` 覆盖）。 */
+export const ZENMUX_DEFAULT_BASE_URL = 'https://zenmux.ai'
 
 /**
  * v1 只识别 `quote_exceeded`（§9.3）。刻意收窄到 ZenMux 专属措辞，避免误处理
@@ -123,16 +127,15 @@ function maxResetsAt(a: QuotaWindow | undefined, b: QuotaWindow | undefined): Qu
 /** ZenMux 平台适配器。 */
 export class ZenMuxAdapter implements PlatformQuotaAdapter {
   readonly platform = 'zenmux'
+  readonly label = 'ZenMux'
+  readonly defaultBaseURL = ZENMUX_DEFAULT_BASE_URL
 
   matchesQuotaExhausted(failure: LlmFailure): boolean {
     return matchesQuotaExhausted(failure)
   }
 
-  async fetchQuota(
-    credential: string,
-    baseURL: string,
-    signal: AbortSignal,
-  ): Promise<PlatformQuotaSnapshot> {
+  async fetchQuota(context: QuotaFetchContext): Promise<PlatformQuotaSnapshot> {
+    const { credential, baseURL, signal } = context
     const url = `${baseURL.replace(/\/$/, '')}/api/v1/management/subscription/detail`
     const response = await fetch(url, {
       method: 'GET',

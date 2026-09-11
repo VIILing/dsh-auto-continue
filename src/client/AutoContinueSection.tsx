@@ -12,13 +12,16 @@ import {
   buildInstanceDelete,
   buildInstanceEdit,
   getSettings,
+  listPlatforms,
   listProviders,
   updateSettings,
   type AutoContinueInstance,
+  type PlatformOption,
   type ProviderOption,
   type SettingsView,
 } from './api.ts'
-import { editStateToInstance, InstanceCard, type EditState } from './InstanceCard.tsx'
+import { editStateToInstance, type EditState } from './edit-state.ts'
+import { InstanceCard } from './InstanceCard.tsx'
 import css from './AutoContinueSection.module.css'
 
 type InstanceRow = AutoContinueInstance & { id: string }
@@ -27,6 +30,7 @@ export function AutoContinueSection({ t }: { t: TranslateNS<'auto-continue'> }) 
   const [rows, setRows] = useState<InstanceRow[]>([])
   const [bindings, setBindings] = useState<Record<string, string>>({})
   const [providers, setProviders] = useState<ProviderOption[]>([])
+  const [platforms, setPlatforms] = useState<PlatformOption[]>([])
   const [keyStates, setKeyStates] = useState<Record<string, boolean>>({})
   const [revision, setRevision] = useState<number | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
@@ -43,6 +47,7 @@ export function AutoContinueSection({ t }: { t: TranslateNS<'auto-continue'> }) 
       setKeyStates(view.keyStates ?? {})
       setRevision(view.revision)
       setProviders(await listProviders())
+      setPlatforms(await listPlatforms())
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('loadFailed'))
@@ -116,6 +121,7 @@ export function AutoContinueSection({ t }: { t: TranslateNS<'auto-continue'> }) 
             key={`${row.id}@${saveNonce}`}
             row={row}
             keySet={keyStates[row.id] ?? false}
+            platforms={platforms}
             boundProviderIds={boundOf(row.id)}
             providers={selectableProviders(row.id)}
             onSave={saveInstance}
@@ -129,6 +135,7 @@ export function AutoContinueSection({ t }: { t: TranslateNS<'auto-continue'> }) 
               key={`__new__@${saveNonce}`}
               row={null}
               keySet={false}
+              platforms={platforms}
               boundProviderIds={[]}
               providers={selectableProviders('')}
               onSave={saveInstance}

@@ -37,9 +37,10 @@ function resolve(raw: unknown): ConfigType {
 }
 
 describe('v2 配置 schema', () => {
-  it('默认空实例、空绑定、默认 baseURL', () => {
+  it('默认空实例、空绑定、全局 baseURL 默认留空（legacy 覆盖）', () => {
     const cfg = resolve({})
-    expect(cfg.platformBaseURL).toBe('https://zenmux.ai')
+    // 全局 platformBaseURL 不再是 zenmux 专属默认值：平台端点由适配器 defaultBaseURL 提供。
+    expect(cfg.platformBaseURL).toBe('')
     expect(cfg.platformInstances).toEqual({})
     expect(cfg.providerBindings).toEqual({})
   })
@@ -52,7 +53,22 @@ describe('v2 配置 schema', () => {
     expect(cfg.platformInstances['zenmux-main'].type).toBe('zenmux')
     expect(cfg.platformInstances['zenmux-main'].statsRetry.initialDelayMs).toBe(60000)
     expect(cfg.platformInstances['zenmux-main'].resumeNotice.enabled).toBe(false)
+    expect(cfg.platformInstances['zenmux-main'].options).toEqual({})
     expect(cfg.providerBindings).toEqual({ 'zenmux-provider': 'zenmux-main' })
+  })
+
+  it('type 必填：不再默认成某个具体平台', () => {
+    expect(() => resolve({ platformInstances: { x: { managementKey: 'sk' } } })).toThrow(/type/)
+  })
+
+  it('实例级 baseURL 与平台专属 options 原样解析', () => {
+    const cfg = resolve({
+      platformInstances: {
+        x: { type: 'zenmux', baseURL: 'https://proxy.internal', options: { region: 'us', retries: 2 } },
+      },
+    })
+    expect(cfg.platformInstances.x.baseURL).toBe('https://proxy.internal')
+    expect(cfg.platformInstances.x.options).toEqual({ region: 'us', retries: 2 })
   })
 
   it('managementKey 标记为 secret（role）', () => {
@@ -120,5 +136,51 @@ describe('v2 配置跨字段校验 (validateConfig)', () => {
     expect(() =>
       validateConfig(makeCfg({ 'x': makeInstance({ resetBufferMs: -1 }) }), ZENMUX),
     ).toThrow(/non-negative integer/)
+  })
+
+  it('baseURL 非 http(s) → 抛错', () => {
+    expect(() =>
+      validateConfig(makeCfg({ 'x': makeInstance({ baseURL: 'proxy.internal' }) }), ZENMUX),
+    ).toThrow(/baseURL must be an http\(s\) URL/)
+  })
+
+  it('deferUnknownPlatforms：未知平台类型被收集而不是抛错（加载期语义）', () => {
+    const deferred: string[] = []
+    expect(() =>
+      validateConfig(
+        makeCfg({ 'or-main': makeInstance({ type: 'openrouter' }) }),
+        ZENMUX,
+        { deferUnknownPlatforms: deferred },
+      ),
+    ).not.toThrow()
+    expect(deferred).toEqual(['openrouter'])
+  })
+
+  it('deferUnknownPlatforms 只放宽“平台未注册”，结构规则仍 fail loud', () => {
+    const deferred: string[] = []
+    expect(() =>
+      validateConfig(
+        makeCfg({ 'or-main': makeInstance({ type: 'openrouter', resetBufferMs: -1 }) }),
+        ZENMUX,
+        { deferUnknownPlatforms: deferred },
+      ),
+    ).toThrow(/resetBufferMs must be a non-negative integer/)
+    expect(deferred).toEqual([])
+  })
+
+  it('validateOptions 钩子：对已知平台调用，未知平台跳过', () => {
+    const seen: Array<[string, string, Record<string, unknown>]> = []
+    validateConfig(
+      makeCfg({
+        'zenmux-main': makeInstance({ options: { a: 1 } }),
+        'or-main': makeInstance({ type: 'openrouter' }),
+      }),
+      new Set(['zenmux', 'openrouter']),
+      { validateOptions: (platform, instanceId, options) => { seen.push([platform, instanceId, options]) } },
+    )
+    expect(seen).toEqual([
+      ['zenmux', 'zenmux-main', { a: 1 }],
+      ['openrouter', 'or-main', {}],
+    ])
   })
 })

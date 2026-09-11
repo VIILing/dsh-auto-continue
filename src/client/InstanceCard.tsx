@@ -8,83 +8,11 @@
 import { useId, useState, type ReactNode } from 'react'
 import type { TranslateNS } from '@deepseek-ai/dsh-client-ui-slots'
 import { IconChevronDownOutline14, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { AutoContinueInstance, ProviderOption } from './api.ts'
+import { isValidBaseURLInput, parseOptionsJson, type PlatformOption, type ProviderOption } from './api.ts'
+import { editStateToInstance, toEditState, type EditState, type InstanceRow } from './edit-state.ts'
 import css from './AutoContinueSection.module.css'
 
-type InstanceRow = AutoContinueInstance & { id: string }
-
-/** One staged instance draft, seeded from a row (or the empty new-instance shape). */
-export interface EditState {
-  id: string
-  isNew: boolean
-  type: string
-  managementKey: string
-  resumeEnabled: boolean
-  resumeTemplate: string
-  initialDelayMs: string
-  maxDelayMs: string
-  totalTimeoutMs: string
-  delaysMs: string
-  resetBufferMs: string
-  boundProviderIds: string[]
-}
-
 const INSTANCE_ID_PATTERN = /^[a-z][a-z0-9-]*$/
-const DEFAULT_DELAYS = '60000,120000,240000,480000,900000'
-const DEFAULT_RESUME_TEMPLATE = '因额度限制，本次请求等待了 {hours} 小时 {minutes} 分钟后重新发送。'
-
-export function toEditState(row: InstanceRow | null): EditState {
-  if (row === null) {
-    return {
-      id: '',
-      isNew: true,
-      type: 'zenmux',
-      managementKey: '',
-      resumeEnabled: false,
-      resumeTemplate: DEFAULT_RESUME_TEMPLATE,
-      initialDelayMs: '60000',
-      maxDelayMs: '900000',
-      totalTimeoutMs: '3600000',
-      delaysMs: DEFAULT_DELAYS,
-      resetBufferMs: '5000',
-      boundProviderIds: [],
-    }
-  }
-  return {
-    id: row.id,
-    isNew: false,
-    type: row.type ?? 'zenmux',
-    managementKey: '',
-    resumeEnabled: row.resumeNotice?.enabled ?? false,
-    resumeTemplate: row.resumeNotice?.template ?? DEFAULT_RESUME_TEMPLATE,
-    initialDelayMs: String(row.statsRetry?.initialDelayMs ?? 60000),
-    maxDelayMs: String(row.statsRetry?.maxDelayMs ?? 900000),
-    totalTimeoutMs: String(row.statsRetry?.totalTimeoutMs ?? 3600000),
-    delaysMs: (row.postResetRetry?.delaysMs ?? [60000, 120000, 240000, 480000, 900000]).join(','),
-    resetBufferMs: String(row.resetBufferMs ?? 5000),
-    boundProviderIds: [],
-  }
-}
-
-export function editStateToInstance(s: EditState): AutoContinueInstance {
-  return {
-    type: s.type,
-    managementKey: s.managementKey === '' ? undefined : s.managementKey,
-    resumeNotice: {
-      enabled: s.resumeEnabled,
-      template: s.resumeTemplate,
-    },
-    statsRetry: {
-      initialDelayMs: Number(s.initialDelayMs),
-      maxDelayMs: Number(s.maxDelayMs),
-      totalTimeoutMs: Number(s.totalTimeoutMs),
-    },
-    postResetRetry: {
-      delaysMs: s.delaysMs.split(',').map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n > 0),
-    },
-    resetBufferMs: Number(s.resetBufferMs),
-  }
-}
 
 interface FieldProps {
   id: string
@@ -114,6 +42,8 @@ interface InstanceCardProps {
   row: InstanceRow | null
   /** Whether a credential is configured for this instance (header badge). */
   keySet: boolean
+  /** Registered platform templates (drives the type select). */
+  platforms: PlatformOption[]
   /** Providers currently bound to this instance (persisted). */
   boundProviderIds: string[]
   /** Providers this card may bind (already filtered by the parent). */
@@ -128,12 +58,13 @@ interface InstanceCardProps {
 }
 
 export function InstanceCard(props: InstanceCardProps) {
-  const { row, keySet, boundProviderIds, providers, onSave, onDelete, onCancel, t } = props
+  const { row, keySet, platforms, boundProviderIds, providers, onSave, onDelete, onCancel, t } = props
   const isNew = row === null
   const uid = useId()
+  const defaultType = platforms[0]?.id ?? ''
   const [open, setOpen] = useState(isNew)
   const [draft, setDraft] = useState<EditState>(() => {
-    const seeded = toEditState(row)
+    const seeded = toEditState(row, defaultType)
     seeded.boundProviderIds = [...boundProviderIds]
     return seeded
   })
@@ -143,17 +74,19 @@ export function InstanceCard(props: InstanceCardProps) {
   const idInvalid = isNew && !INSTANCE_ID_PATTERN.test(draft.id.trim())
   const numericInvalid = [draft.initialDelayMs, draft.maxDelayMs, draft.totalTimeoutMs, draft.resetBufferMs]
     .some((value) => !Number.isFinite(Number(value)))
-  const blocked = idInvalid || numericInvalid || saving
+  const optionsInvalid = parseOptionsJson(draft.optionsJson) === null
+  const baseURLInvalid = !isValidBaseURLInput(draft.baseURL)
+  const blocked = idInvalid || numericInvalid || optionsInvalid || baseURLInvalid || saving
 
   const title = isNew ? t('add') : (row?.id ?? '')
-  const description = draft.type
+  const description = platforms.find((p) => p.id === draft.type)?.label ?? draft.type
 
   const discard = () => {
     if (isNew) {
       onCancel?.()
       return
     }
-    const reseeded = toEditState(row)
+    const reseeded = toEditState(row, defaultType)
     reseeded.boundProviderIds = [...boundProviderIds]
     setDraft(reseeded)
     setOpen(false)
@@ -236,15 +169,55 @@ export function InstanceCard(props: InstanceCardProps) {
               />
             </Field>
 
-            <Field id={`${uid}-type`} label={t('type')}>
+            <Field id={`${uid}-type`} label={t('type')} hint={platforms.length === 0 ? t('noPlatforms') : undefined}>
               <select
                 id={`${uid}-type`}
                 className={css.select}
                 value={draft.type}
+                disabled={platforms.length === 0}
                 onChange={(event) => { setDraft({ ...draft, type: event.target.value }) }}
               >
-                <option value="zenmux">zenmux</option>
+                {/* 已注册平台模板（含第三方插件注册的）由 host 的 platforms.list 提供；
+                    当前实例若引用了一个已不存在的模板，额外保留一个选项避免静默改类型。 */}
+                {platforms.map((platform) => (
+                  <option key={platform.id} value={platform.id}>{platform.label}</option>
+                ))}
+                {draft.type !== '' && !platforms.some((p) => p.id === draft.type)
+                  ? <option value={draft.type}>{draft.type}</option>
+                  : null}
               </select>
+            </Field>
+
+            <Field
+              id={`${uid}-base-url`}
+              label={t('baseURL')}
+              hint={t('baseURLHint')}
+              invalid={baseURLInvalid}
+              invalidLabel={t('baseURLInvalid')}
+            >
+              <input
+                id={`${uid}-base-url`}
+                className={baseURLInvalid ? `${css.input} ${css.inputInvalid}` : css.input}
+                value={draft.baseURL}
+                placeholder={t('baseURLPlaceholder')}
+                onChange={(event) => { setDraft({ ...draft, baseURL: event.target.value }) }}
+              />
+            </Field>
+
+            <Field
+              id={`${uid}-options`}
+              label={t('options')}
+              hint={t('optionsHint')}
+              invalid={optionsInvalid}
+              invalidLabel={t('optionsInvalid')}
+            >
+              <textarea
+                id={`${uid}-options`}
+                className={optionsInvalid ? `${css.input} ${css.inputInvalid}` : css.input}
+                rows={3}
+                value={draft.optionsJson}
+                onChange={(event) => { setDraft({ ...draft, optionsJson: event.target.value }) }}
+              />
             </Field>
 
             <Field id={`${uid}-key`} label={t('managementKey')} hint={t('managementKeyHint')}>
