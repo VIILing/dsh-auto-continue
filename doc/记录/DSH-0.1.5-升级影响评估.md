@@ -250,13 +250,13 @@ tsdown.config.ts（可选但对齐，见 §2 P2 表）
 
 ## 6. 未覆盖 / 待确认
 
-1. **真实 402 黄金样本仍未核对**（v1 §18-8，延续既有待办）：与本次升级无关，等配额耗尽后处理。
+1. **真实 402 黄金样本仍未核对**（需求 §7 验收第 18 条，延续既有待办）：与本次升级无关，等配额耗尽后处理。
 2. ~~**未跑真实 `dsh web` 挂载 e2e**~~ → **已补跑通过**（见 §8）：`pnpm test:e2e` 3 个用例对真实
    `dsh web` 全部通过，覆盖 host 装载、client bundle 无头渲染与设置页交互。
 3. **依赖 hoisting 行为未实测**：`dsh plugin add` 后的实际解析（插件自带副本 vs host 提供）未验证；
    迁移到 0.1.5 并把 `dsh-settings` 降为 type-only 后，该风险基本消除。
 4. **`AGENTS.md` 铁律 4 已过时**：0.1.5 起 `SurfaceEventType` 已包含 `'system/message'`，
-   v1 §19.3 预留的「系统消息升级」现在具备技术前提。本次不改代码，仅记录。
+   需求 §8 预留的「系统消息升级」现在具备技术前提。本次不改代码，仅记录。
 5. **`LlmProviderInfo` 是未使用的 import**（`src/index.ts:6`），可顺手清理。
 6. **`Agent` 由直接 interface 改为模块合并声明**（`packages/core/agent/src/runtime-types.ts:163` 的
    `declare module './types.ts'`）：理论上影响 `payload.agent.session.append(...)` 的解析，

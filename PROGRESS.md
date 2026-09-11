@@ -1,8 +1,8 @@
 # 开发进度：@deepseek-ai/dsh-auto-continue
 
 > 本文件记录 `@deepseek-ai/dsh-auto-continue` 插件的任务规划与实现进度。
-> 关联文档：`doc/DSH插件开发背景知识.md`、`doc/dsh-auto-continue-需求文档.md`、
-> `doc/dsh-auto-continue-需求文档-v2-补充.md`。
+> 关联文档：`doc/需求文档/需求文档.md`、`doc/设计文档/`（平台模板设计约束 / 架构与集成 /
+> 平台适配器 / 恢复流程 / 配置与设置）、`doc/参考文档/DSH插件开发背景知识.md`。
 
 ## 当前状态
 
@@ -14,7 +14,7 @@
 `pnpm test:e2e`（3 用例，对真实 `dsh web`）✅。
 
 > 框架依赖基线：DSH `0.1.5-rc.2`（升级前为 `0.1.1-rc.2`）。升级影响评估见
-> `doc/DSH-0.1.5-升级影响评估.md`。
+> `doc/记录/DSH-0.1.5-升级影响评估.md`。
 
 ## 任务列表与进度
 
@@ -22,7 +22,7 @@
 
 | # | 任务 | 状态 | 说明 |
 |---|---|---|---|
-| 0 | 阅读技术文档与需求文档 | [x] | 已阅读 `doc/DSH插件开发背景知识.md` 与 `doc/dsh-auto-continue-需求文档.md` |
+| 0 | 阅读技术文档与需求文档 | [x] | 已阅读 `doc/参考文档/DSH插件开发背景知识.md` 与需求文档 |
 | 1 | 编写进度 PROGRESS.md | [x] | 本文件 |
 | 2 | 搭建包骨架 | [x] | `package.json` / `tsconfig.json` / `vitest.config.ts` / `.gitignore` |
 | 3 | 实现 `src/config.ts` | [x] | Config schema（Schemastery）与 provider 配置解析、fail loud 校验 |
@@ -75,9 +75,8 @@
 ├── README.md
 ├── PROGRESS.md
 ├── doc/
-│   ├── DSH插件开发背景知识.md
-│   ├── dsh-auto-continue-需求文档.md
-│   └── dsh-auto-continue-需求文档-v2-补充.md
+│   ├── 需求文档/需求文档.md（原 v1 + v2 补充，后已合并）
+│   └── 参考文档/DSH插件开发背景知识.md
 ├── src/
 │   ├── index.ts            # QuotaRuntime；installSettingsSection + 自建 /auto-continue/api 路由
 │   ├── config.ts           # v2 Config schema + validateConfig
@@ -110,7 +109,7 @@
 
 ## v2 补充（instance 三层模型 + 设置 UI）
 
-> 依据 `doc/dsh-auto-continue-需求文档-v2-补充.md`。v2 与 v1 冲突处以 v2 为准。
+> 依据需求文档（当时为 v2 补充文档，现已合并进 `doc/需求文档/需求文档.md`）。
 
 ### v2 任务进度
 
@@ -249,7 +248,7 @@ Playwright 无头 Chromium 渲染：
 - ⏳ §9.3 的 402 识别正则**仍待真实 402 样本核对**。当前真实账号额度健康
   （5h `usage_percentage=0.0196`、7d `0.1088`），无法在不耗尽配额的前提下构造真实 402；
   待拿到真实 `quote_exceeded` 响应（含 `dsh-llm-pi-ai` 压平后的形态）后，再补一次黄金样本回归，
-  必要时按真实样本修订 `src/platforms/zenmux.ts` 正则与 v1 §9.3。
+  必要时按真实样本修订 ZenMux 模板识别规则（现见 `doc/设计文档/平台适配器设计.md` §5.1）。
 
 验证：`pnpm typecheck` ✅、`pnpm test` → **7 个测试文件、75 个用例全部通过** ✅。
 
@@ -257,7 +256,7 @@ Playwright 无头 Chromium 渲染：
 
 ## DSH 0.1.5-rc.2 升级迁移
 
-> 依据 `doc/DSH-0.1.5-升级影响评估.md`（含逐条证据与实证结果）。
+> 依据 `doc/记录/DSH-0.1.5-升级影响评估.md`（含逐条证据与实证结果）。
 > 目标版本：DSH `0.1.5-rc.2`（npm dist-tag `next`，当时的**最新已发布**版本）。
 
 ### 迁移内容
@@ -304,3 +303,122 @@ Playwright 无头 Chromium 渲染：
 ### 未覆盖
 
 - 真实 402 黄金样本核对仍待办（与本次升级无关，见上一节）。
+
+---
+
+## 平台适配器扩展性审查（2026-09-11）
+
+用户提问：是否实现了针对不同 Platform 的接口，新接入一个 Platform 是否只需实现几个固定方法。
+
+- 产出 `doc/记录/平台适配器扩展性审查.md`；方法为静态审查 + **5 个实测探针**（临时 spec，跑完已删除，
+  未改动测试基线：仍是 7 文件 / 75 用例）。
+- **结论（已实证）**：
+  - ✅ 「恢复状态机平台无关」成立——只实现接口 3 方法的最小 `acme` 适配器，经
+    `registerPlatformAdapter`（甚至由独立插件 `ctx.inject(['quota'])` 注册）即可跑通
+    「402 → 查统计 → 等待 → `{kind:'retry'}`」全链路，核心文件零改动。
+  - ❌ 「只需实现几个固定方法即可接入」不成立，差 4 处：P0-1 全局唯一 `platformBaseURL`
+    （两个平台无法各持端点）、P0-2 base 层校验早于注册（`cordis.yml` 无法声明新平台）、
+    P0-3 client 下拉与文案硬编码 zenmux 且无 `platforms.list`、P1-1 `fetchQuota` 拿不到实例配置
+    （平台专属参数无通路）。
+- **文档偏差**：旧 v1 §19.2 / README「未来扩展点」/ AGENTS.md §1 的「只需实现并注册」属过度承诺；
+  旧 v2 §2.1「platform URL 由平台模板决定」与实现不符。审查当时给出改写建议；**随后在 v3 改造中
+  已一并修正**（见本文件「平台模板一等化（v3）」与「文档重组」两节）。
+- **决策**：本次只审查、只落文档，不动接口与 UI；§7 的 6 项改造（baseURL 下沉、接口扩容、
+  注册时机、`platforms.list`、契约测试、未知字段 fail loud）待用户确认后再实施。
+
+---
+
+## 平台模板一等化（v3，2026-09-11）
+
+用户确认按审查报告 §7 的目标实施：**让「新增一个平台 = 实现 PlatformQuotaAdapter + 注册」
+真正成立，但不接入任何具体新提供商。**
+
+### 改了什么
+
+| 改造项 | 落地内容 |
+|---|---|
+| 接口扩容（`platform.ts`） | 适配器新增可选元数据 `label`（UI 展示名）、`defaultBaseURL`（默认端点）、`optionsSchema`（平台专属参数校验）、`isExhausted`（覆盖通用耗尽口径）；`fetchQuota(credential, baseURL, signal)` 改为 `fetchQuota(context)`，context 携带 `credential` / `baseURL` / `instance` / `signal` |
+| 端点归属 | 新增实例级 `baseURL`；全局 `platformBaseURL` 默认值改为 `''`（legacy 覆盖）。解析优先级：`instance.baseURL` → 全局非空值 → `adapter.defaultBaseURL`；都拿不到则告警并 `next()`。**多平台因此可并存** |
+| 平台专属参数 | 实例新增 `options`（schema `dict(any)`，默认 `{}`），经 `validateConfig` 的 `validateOptions` 钩子交给适配器 `optionsSchema` 校验（fail loud） |
+| 注册时机 | 构造期对未知平台类型**只告警**（`deferUnknownPlatforms`），因为平台适配器可能由稍后加载的插件注册、base 层需要能提前声明；settings 写入路径仍严格抛错 |
+| 注册入口 | `registerPlatformAdapter` 明确为第三方入口（独立插件 `ctx.inject(['quota'], c => c.quota.registerPlatformAdapter(adapter))`，实测零核心改动）；新增 `ctx.quota.platforms()` 返回 `{id,label}[]` |
+| UI 数据驱动 | 新增 `/auto-continue/api/platforms.list`；client 平台下拉改为渲染该列表（不再写死 `zenmux`），新增「平台端点（可选）」与「平台专属参数（JSON）」字段，密钥提示文案去掉 ZenMux 字样 |
+| 内置平台清单 | 新增 `src/platforms/index.ts` 的 `builtinPlatformAdapters()`；`index.ts` 不再硬编码 `adapters.set('zenmux', ...)` |
+| 契约回归 | 新增 `tests/platforms/contract.spec.ts`（8 用例），用非内置平台 `demo` 钉死上述全部承诺 |
+
+### 有意为之的行为变更（破坏性）
+
+1. **实例 `type` 必填**：schema 去掉 `default('zenmux')`。此前省略 `type` 会静默变成 zenmux；
+   现在 schema 直接报错（`type missing required value`）。UI 始终写入 `type`，v1/v2 文档示例也都有。
+2. **全局 `platformBaseURL` 默认值 `'https://zenmux.ai'` → `''`**：zenmux 官方地址移入
+   `ZenMuxAdapter.defaultBaseURL`。既有用户若未显式设置该字段，行为**不变**（仍请求 zenmux.ai）；
+   若显式设置过，仍按 legacy 全局覆盖生效（且与适配器默认不一致时打一条 warn）。
+3. **移除导出常量** `DEFAULT_PLATFORM` / `DEFAULT_PLATFORM_BASE_URL`（平台知识不再留在 `config.ts`）。
+
+### 验证
+
+- `pnpm typecheck` ✅ 0 错误
+- `pnpm test` ✅ **9 个文件 / 108 用例**（原 7 文件 / 75 用例；新增 contract 8 例 + config/api/client-api/zenmux 若干）
+- `pnpm build` ✅ host `lib/index.js` + client `lib/client.js`（purity gate 无报错）
+- `pnpm test:e2e` ✅ 3/3（真实 `dsh web`：bundle 挂载、设置独立选项卡、新增实例保存）
+  > 本次 e2e 曾因 Playwright 浏览器缺失（`chromium_headless_shell-1234` 不在默认 cache）失败，
+  > 用 `npx playwright install chromium` 装好即可；与代码改动无关。
+
+### 未做（明确留在范围外）
+
+- 不接入任何具体新平台（按要求）；`demo` 仅存在于测试中。
+- UI 不渲染适配器 `optionsSchema` 的结构化表单，平台专属参数用通用 JSON 输入框编辑。
+- `platforms.list` 不下发 `defaultBaseURL`（UI 用「留空即默认」表达，不需要知道具体值）。
+
+### 文档同步
+
+- **新增 `doc/设计文档/平台模板设计约束.md`**：**版本无关的设计约束文档**（运行目标；模板 / 实例 /
+  Provider 的关系；接入新平台的两条硬性要求——不影响其他代码、用接口契约保证规范与隔离；
+  10 条可验收不变量）。只写设计要求与思想，不写接口签名/字段/文件位置等会随版本变化的内容；
+  已登记进 `AGENTS.md` §2 的文档优先级列表。
+- `README.md`：三层模型、新增平台教程、配置字段表（`type` 必填 / `baseURL` / `options` /
+  `platformBaseURL` 语义）、适配器接口、服务与扩展点。
+- `AGENTS.md`：§1 平台一等化、§4 目录（`platforms/index.ts`、contract 测试）、§5 端点解析优先级与
+  校验强度差异、§6 铁律 6/7 与自检项、§8 基线 8 文件 / 95 用例。
+- 需求文档（旧 v1 / v2 补充）：接口、元信息、全局字段与 `type` 必填等已更新；
+  **这两份文档随后已合并为 `doc/需求文档/需求文档.md`，技术内容拆入 `doc/设计文档/`**。
+- `doc/记录/平台适配器扩展性审查.md`：补「落地状态」，§5 各缺口标注已解。
+
+---
+
+## 文档重组（2026-09-11）
+
+用户要求整理 `doc/`：按用途分类，并把「需求」与「需求衍生出的技术配置」拆开。
+
+### 目录结构
+
+```
+doc/
+  需求文档/需求文档.md            # 唯一需求规格（合并原 v1 + v2 补充）
+  设计文档/
+    平台模板设计约束.md           # 版本无关的设计要求与思想（不变量）
+    架构与集成设计.md             # 包/模块/服务/事件/集成点
+    平台适配器设计.md             # 接口契约、统一快照、ZenMux 规格、注册与校验时机
+    恢复流程设计.md               # 状态机、退避与等待、关键流程、提示、限制
+    配置与设置设计.md             # 字段与默认值、校验、凭据、设置通道、界面、变更语义
+  参考文档/DSH插件开发背景知识.md
+  记录/DSH-0.1.5-升级影响评估.md
+  记录/平台适配器扩展性审查.md
+```
+
+### 关键决策
+
+1. **需求与技术分离**：需求文档只保留「做什么、为什么、怎样算做到」（目标、FR/NFR、角色关系、
+   验收标准）与一张「需求 → 设计」对照表；配置字段表、接口签名、状态机、参数取值全部移入设计文档。
+   此前 v2 补充文档把详细配置要求（§3.1）混在需求里，是本次整理的直接动因。
+2. **合并两份需求文档**：原 v1 文档与原 v2 补充文档合并为一份 `需求文档.md`；冲突处以 v2/v3 为准。
+   旧章节号不再有效，文档内提供**旧号 → 新位置**的对照表（§9.2），以便 `PROGRESS.md` 与
+   `doc/记录/` 中的历史引用仍可追溯。
+3. **设计文档分层**：`平台模板设计约束.md` 是**版本无关的思想/约束**层（不写接口签名与字段）；
+   其余四份是**当前技术设计**层，允许随版本变化。改接口先看约束层，再看适配器设计。
+4. **非需求/设计文档归入两类**：框架背景知识属长期参考 → `参考文档/`；升级影响评估与扩展性审查
+   属一次性结论 → `记录/`。
+5. 全仓库交叉引用同步更新：`AGENTS.md` §2 文档优先级列表重写为四类九篇；`README.md`、
+   `PROGRESS.md`、两份记录文档、参考文档中的旧路径与旧章节引用一并修正。
+
+> 本次仅文档整理，未改动任何源码与测试；测试基线仍为 9 文件 / 108 用例。

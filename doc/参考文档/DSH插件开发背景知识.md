@@ -2,7 +2,7 @@
 
 > 本文面向需要在 DeepSeek Harness（以下简称 DSH）中开发插件的工程师。
 > 阅读对象：已经了解 TypeScript 与 Node.js，但不熟悉 DSH / Cordis 的开发者。
-> 配套文档：`dsh-auto-continue-需求文档.md`。
+> 配套文档：`doc/需求文档/需求文档.md`。
 
 ---
 
