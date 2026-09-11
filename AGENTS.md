@@ -142,9 +142,10 @@ base 层需要能提前声明），settings 写入路径严格抛错。
 3. **一切等待可取消**：所有 `abortableDelay` 必须同时监听 `payload.signal`（turn 中止）与插件
    lifetime `AbortController`；插件卸载时清理全部 timer 与在途任务（用 `ctx.effect`）。
    取消**不得**改变共享状态（不因此置 `disabled`）。
-4. **模型可见即落 surface 事件**：本插件只追加 `user/message`。
-   （注：DSH `0.1.5` 起 `SurfaceEventType` 已包含 `system/message`，需求 §8 预留的
-   「系统消息升级」已具备技术前提；本插件当前仍用 user 角色，未跟进。）
+4. **模型可见即落 surface 事件**：本插件只追加 `user/message`，且消息来源标记为 plugin。
+   **不要改用 `system/message`**：它是「渲染后的系统提示词」所在节点，框架（`SystemPromptProjection`）
+   会把非 in-history 路由（含 ZenMux 走的 pi-ai）上的后续系统节点置空 → 通知静默失效；
+   依据见 `doc/设计文档/恢复流程设计.md` §6.1。
 5. **凭据安全**：`managementKey` 标记 `role('secret')`，settings 描述符/线路响应中**不回显**；
    UI 留空 = 不修改（host 在 `settings.replace` 前从当前值回注 secret）。日志/事件中不得输出明文
    Key（统计响应打日志前注意脱敏）。

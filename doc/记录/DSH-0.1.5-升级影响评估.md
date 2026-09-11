@@ -142,7 +142,7 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'       // 提供 Cont
 |---|---|---|
 | `SurfaceOp.replace` 字段 `start/end` → `startSeq/endSeq`；Session 日志格式升到 V3 | `packages/core/session/src/types.ts:436` vs tag `:378` | 插件只用 `surfaceOp:'append'`（`src/index.ts:356`），append 语义未变 |
 | `assistant/message` data 新增必填 `stream` | `packages/core/session/src/types.ts:321-328` | 插件只读 `interrupted` / `message.source.*`，不生产该事件 |
-| `SurfaceEventType` **新增 `'system/message'`** | `packages/core/session/src/types.ts:412-414` | 纯增量；但**推翻了本仓库 AGENTS.md 铁律 4**（详见 §6） |
+| `SurfaceEventType` **新增 `'system/message'`** | `packages/core/session/src/types.ts:412-414` | 纯增量；与 AGENTS.md 铁律 4 的关系见 §6.1（**结论：该事件不可用于插件通知**） |
 | `LlmRuntime` 基类 `Service` → `TypertRemoteService`，`listProviders` 加 `@Remote` | `packages/llm/llm/src/index.ts:333,468` | `TypertRemoteService extends Service`，调用与返回类型不变 |
 | `ctx.llm.listProviders()` 返回 `LlmProviderInfo`（插件中为未使用的 import） | `packages/llm/llm/src/index.ts:469` | 行为不变；可顺手清理死 import |
 | client 纯净度门禁新增 `dsh.client.external` 声明字段 | `packages/util/package-manifest/src/types.ts:78-83` | 插件 client 只值导入 `ui-primitives`（baseline）与 react，无需 `external` |
@@ -255,8 +255,9 @@ tsdown.config.ts（可选但对齐，见 §2 P2 表）
    `dsh web` 全部通过，覆盖 host 装载、client bundle 无头渲染与设置页交互。
 3. **依赖 hoisting 行为未实测**：`dsh plugin add` 后的实际解析（插件自带副本 vs host 提供）未验证；
    迁移到 0.1.5 并把 `dsh-settings` 降为 type-only 后，该风险基本消除。
-4. **`AGENTS.md` 铁律 4 已过时**：0.1.5 起 `SurfaceEventType` 已包含 `'system/message'`，
-   需求 §8 预留的「系统消息升级」现在具备技术前提。本次不改代码，仅记录。
+4. **`AGENTS.md` 铁律 4 与 `system/message` 的关系**：0.1.5 起 `SurfaceEventType` 已包含
+   `'system/message'`，一度被认为「系统消息升级」具备技术前提。**后续调查推翻了这个判断**，
+   见 §6.1。
 5. **`LlmProviderInfo` 是未使用的 import**（`src/index.ts:6`），可顺手清理。
 6. **`Agent` 由直接 interface 改为模块合并声明**（`packages/core/agent/src/runtime-types.ts:163` 的
    `declare module './types.ts'`）：理论上影响 `payload.agent.session.append(...)` 的解析，
@@ -264,6 +265,26 @@ tsdown.config.ts（可选但对齐，见 §2 P2 表）
 7. **`dsh-agent` 0.1.5 新增 peerDependencies `@deepseek-ai/dsh-session-projection` / `@deepseek-ai/dsh-util-values`**：
    插件未安装这两个包；§4 实测在 `skipLibCheck: true` 下不影响编译。仅当 `pnpm install` 出现
    unmet peer 报错时才需补 devDependency。
+
+### 6.1 后续调查（2026-09-11）：`system/message` 不可用于插件通知
+
+对「把 `resumeNotice` 从 user 角色升级为 `system/message`」这一预留事项做了源码级调查，结论是
+**不做**——该 surface 事件是「渲染后的系统提示词」所在节点，不是插件通知通道：
+
+1. 系统提示词组装方（`packages/core/agent-loop/src/runtime-context.ts` 的
+   `SystemPromptProjection.project()`）把**所有**存活的 `system/message` 节点纳入管理；
+   当 `inHistory === false`、新消息系列开始或本次渲染为空时，它会把所有非首节点
+   `replace(seq, '')` **置空**，被置空的节点不产生任何 wire message。
+2. `inHistory = preparedCall?.systemPromptUpdate === 'in-history'`；0.1.5 中**只有
+   `llm-deepseek` 声明了 `systemPromptUpdate: 'in-history'`**，`llm-pi-ai`（ZenMux 所走的路由）
+   没有声明。因此追加 `system/message` 会在目标平台上被静默置空，**通知到不了模型**。
+3. 框架对插件注入合成上下文的公开入口是 user 角色（`Agent.inject(input: UserMessage)`）；
+   一方插件（`packages/context/agent-instructions`、`packages/skill/tool-skill`）均采用
+   **user 角色 + 调用方自带的 `<system-reminder>` 包裹**。客户端轨迹界面还会把追加的
+   `system/message` 显示为「系统提示词已更新」，语义不符。
+
+处置：**保持 user 角色 + plugin 来源**（代码不变），把结论写入
+`doc/设计文档/恢复流程设计.md` §6.1、需求 §8、`AGENTS.md` 铁律 4 与 `README.md`。
 
 ---
 
@@ -275,7 +296,7 @@ tsdown.config.ts（可选但对齐，见 §2 P2 表）
 | 必做 | 更新 `README.md`（DSH 兼容版本）与 `PROGRESS.md`（升级记录、决策） |
 | 建议 | 跑一次 `pnpm test:e2e` 对真实 `dsh web` 验证挂载与设置页渲染 |
 | 建议 | 同步 `src/trust-fence.ts` 到官方当前实现 |
-| 建议 | 修正 `AGENTS.md` 铁律 4（`system/message` 已可用）与死 import |
+| 建议 | 修正 `AGENTS.md` 铁律 4（明确 `system/message` 不可用于插件通知，见 §6.1）与死 import |
 
 ---
 

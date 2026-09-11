@@ -372,7 +372,7 @@ DSH 的核心不变式：
 agent.session.append('user/message', message, { surfaceOp: 'append' })
 ```
 
-- `SurfaceEventType` 是 type 别名，**插件无法通过声明合并扩展**。因此当前插件无法在不改 core 的前提下新增 `system/message` 这种 surface 类型；只能用 `user/message` 承载提示内容。
+- `SurfaceEventType` 是 type 别名，**插件无法通过声明合并扩展**。`0.1.5` 起框架自带了 `system/message`，但它是**渲染后的系统提示词**所在节点，不是插件通知通道（框架会在非 in-history 路由上把后续系统节点置空）；插件注入的合成上下文应走 `user/message`，必要时用调用方自带的 `<system-reminder>` 包裹——这也是 `agent-instructions`、`tool-skill` 等一方插件的做法。
 
 ### 5.2 LLM 服务
 

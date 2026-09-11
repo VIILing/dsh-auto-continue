@@ -231,7 +231,8 @@ factory})` 注册，CSS Module 内联注入 `<style data-plugin>`），host 半�
 - 仅进程内无感重发，不跨进程重启恢复。
 - 不轮询额度，不预停新请求。
 - 不处理余额类/账户逾期类错误（v1 ZenMux 中为 `insufficient_credit` / `reject_no_credit`）。
-- 不新增 `system/message` surface 事件。
+- 不使用 `system/message` surface 事件：它是系统提示词槽位，框架会在非 in-history 路由上
+  将后续系统节点置空（ZenMux 即属此类），提示消息因此固定为 user 角色 + plugin 来源。
 - 不实现 provider 切换（只预留 `quota/changed` 事件与适配器接口）。
 
 ## 未来扩展点
@@ -239,8 +240,10 @@ factory})` 注册，CSS Module 内联注入 `<style data-plugin>`），host 半�
 1. **Provider 切换**：监听 `quota/changed`，在 `agent/request` 瀑布中改写 provider 路由。
 2. **新平台模板**：实现 `PlatformQuotaAdapter` 并注册（`ctx.quota.registerPlatformAdapter`），
    不改恢复状态机；端点、专属参数与“耗尽”口径都由适配器自带（见「新增一个平台模板」）。
-3. **系统消息升级**：DSH `0.1.5` 起已支持 `system/message` surface 事件，`resumeNotice`
-   可从 user 角色切换为 system 角色（本插件当前仍用 user 角色）。
+3. **系统消息**：经调查确认不采用 `system/message`（它是系统提示词节点，非通知通道；
+   在 ZenMux 等非 in-history 路由上会被置空）。如需要更强的「系统级」观感，可将提示文本包进
+   `<system-reminder>`，与 DSH 一方插件的做法一致。依据见
+   `doc/设计文档/恢复流程设计.md` §6.1。
 
 ## 安装与挂载
 

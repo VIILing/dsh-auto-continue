@@ -422,3 +422,35 @@ doc/
    `PROGRESS.md`、两份记录文档、参考文档中的旧路径与旧章节引用一并修正。
 
 > 本次仅文档整理，未改动任何源码与测试；测试基线仍为 9 文件 / 108 用例。
+
+---
+
+## resumeNotice 与 system/message 调查（2026-09-11）
+
+立项事项：「把 `resumeNotice` 从 user 角色升级为 `system/message`」（需求 §8 未来预留项）。
+
+**调查方法**：读 DSH 源码（`dsh-agent-loop` 的系统提示词投影、`dsh-session` 的 surface 校验、
+`dsh-llm` 的消息工厂、一方插件 `agent-instructions` / `tool-skill` 的注入方式）+ 全仓检索
+`systemPromptUpdate` 声明方。
+
+**结论：不做。`system/message` 是「渲染后的系统提示词」槽位，不是插件通知通道。**
+
+1. `SystemPromptProjection.project()`（`packages/core/agent-loop/src/runtime-context.ts`）把**所有**
+   存活的 `system/message` 节点纳入管理；当路由不支持 in-history 更新、新系列开始或渲染为空时，
+   会把所有非首节点 `replace(seq, '')` **置空**（置空节点不产生 wire message）。
+2. `inHistory` 取决于路由是否声明 `systemPromptUpdate: 'in-history'`；0.1.5 中**只有 `llm-deepseek`
+   声明**，ZenMux 走的 `llm-pi-ai` 没有 → 我们的通知会被静默置空，**在目标平台上根本到不了模型**。
+3. 框架给插件注入合成上下文的公开入口是 user 角色（`Agent.inject(input: UserMessage)`）；一方插件
+   （AGENTS.md / 文件变更通知 / 技能内容）都用 **user 角色 + 调用方自带的 `<system-reminder>` 包裹**。
+4. 客户端轨迹界面会把追加的 `system/message` 显示为「系统提示词已更新」，语义不符。
+
+**决策**：保持现状——`user/message` + `plugin` 来源（`source.kind === 'plugin'`），**代码零改动**；
+若将来需要更强的「系统级」观感，正确做法是把说明包进 `<system-reminder>`（与一方插件一致），
+而不是借用 `system/message`。
+
+**文档同步**：`doc/设计文档/恢复流程设计.md` 新增 §6.1（完整依据）、需求 §3 非目标与 §8 未来预留
+改为「已调查，结论为不采用」、`AGENTS.md` 铁律 4 改为「不要改用 `system/message`」、
+`README.md` 限制与未来扩展点同步、`doc/参考文档/DSH插件开发背景知识.md` 更新该条表述、
+`doc/记录/DSH-0.1.5-升级影响评估.md` 增补 §6.1 并修正原「技术前提已具备」的判断。
+
+> 本次仅文档与结论变更，未改动源码与测试；测试基线仍为 9 文件 / 108 用例。
