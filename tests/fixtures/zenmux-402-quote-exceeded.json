@@ -1,0 +1,1 @@
+{"error":{"code":"402","type":"quote_exceeded","message":"You have reached your subscription quota limit. Please wait for automatic quota refresh in the rolling time window, upgrade to a higher plan, or use a Pay-As-You-Go API Key for unlimited access. Learn more: https://zenmux.ai/docs/guide/subscription.html (request_id: 31ee1011fc2e41188c272af95b69311f)"}}

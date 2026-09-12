@@ -10,7 +10,7 @@
 单包（host + client）独立仓库，含三层模型、instance 键控状态机、
 `SettingsProvider.installSection` + 自建 `/auto-continue/api` 路由、
 浏览器侧 `settings.section` 独立设置选项卡。
-验证：`pnpm typecheck` ✅、`pnpm build` ✅、`pnpm test`（7 文件 / 75 用例）✅、
+验证：`pnpm typecheck` ✅、`pnpm build` ✅、`pnpm test`（9 文件 / 120 用例）✅、
 `pnpm test:e2e`（3 用例，对真实 `dsh web`）✅。
 
 > 框架依赖基线：DSH `0.1.5-rc.2`（升级前为 `0.1.1-rc.2`）。升级影响评估见
@@ -226,7 +226,9 @@ Playwright 无头 Chromium 渲染：
 
 ---
 
-## 黄金样本回归（v1 §1.3 / §18-8）
+## 黄金样本回归（v1 §1.3 / §18-8 / §18-18）
+
+### 样本 1：健康账号的统计响应（§8.3 字段映射）
 
 需求方提供了真实 ZenMux 统计接口响应样本（一次真实
 `GET https://zenmux.ai/api/v1/management/subscription/detail` 的原始 JSON），
@@ -242,15 +244,55 @@ Playwright 无头 Chromium 渲染：
 - **`fetchQuota` 全链路**：请求 URL（`/api/v1/management/subscription/detail`）与
   `Authorization: Bearer <key>` 请求头正确，真实响应体可归一化为快照。
 
+### 样本 2：达到配额上限（402 条件成立）的统计响应（§5.2）
+
+需求方提供了账号**真实达到订阅配额上限**时抓取的同一接口原始响应（`curl` 直接落盘，
+`tests/fixtures/zenmux-subscription-detail-402.json`，逐字节保存），新增回归用例 5 条：
+
+- **耗尽判定**：真实样本 `quota_5_hour` 为 `usage_percentage=1`、`remaining_flows=0` → 已耗尽；
+  `quota_7_day`（`0.4752` / `111.78`）未耗尽。此前的样本账号额度健康，**从未覆盖耗尽分支**。
+- **等待目标**：7d 未满 → 取 5h `resets_at`（`2026-09-12T11:02:38Z`）。样本里这个时刻恰好**晚于**
+  7d 的 `resets_at`（`08:48:40Z`），所以该样本本身无法区分「取 5h」与「取 max(5h, 7d)」；
+  用例把真实数据上的等待目标钉死为 5h 的重置时刻，`max` 语义的区分仍由 §5.2 的规则用例
+  （7d 满 / 5h 未满 → 7d）负责。
+- **决策链**：真实快照经 `decideWaitAction` 得到 `waiting-reset`，目标 = `5h resets_at + resetBufferMs`。
+- **字段映射 / `fetchQuota` 全链路**：与样本 1 同款断言（URL 与 `Authorization: Bearer` 请求头正确）。
+- **端到端**：`tests/integration.spec.ts` 另加 1 条「真实 402 文案 + 真实耗尽统计 → 等到 5h 重置后
+  `{kind:'retry'}`」，把识别、查询、等待决策串起来跑一遍（fake timers）。
+
+### 样本 3：真实 402 错误响应（§9.3 识别规则 / §18-18）
+
+需求方提供了**线上抓取的真实 402 错误响应体**（`quote_exceeded`，尾部带
+` (request_id: 31ee1011fc2e41188c272af95b69311f)`），已逐字节保存为
+`tests/fixtures/zenmux-402-quote-exceeded.json`；余额类两型（`insufficient_credit` /
+`reject_no_credit`）暂无线上样本，响应体逐字取自 ZenMux 官方错误码参考
+（<https://zenmux.ai/docs/guide/advanced/error-codes>）。响应体与压平形态集中在
+`tests/platforms/zenmux-402-sample.ts`，供平台与集成用例共用；核对要点（新增回归用例 6 条）：
+
+- **样本自校验**：真实响应体的 `code` / `type` / `message`（含 request_id 后缀）逐字段断言。
+- **`quote_exceeded` 命中**：原始字节（含结尾换行）、JSON 原样、`dsh-llm-pi-ai`
+  `formatProviderError` 压平后的 `402: {json}`、以及 SDK 已把 body 折进 `error.message` 的
+  `402 <message>` 都命中；`failure.status` 缺失（真实链路里 pi-ai 的 failure 只有
+  `message`/`code`）同样命中。**压平形态已用真实 `dsh-llm-pi-ai` 的
+  `normalizeProviderError` / `formatProviderError` 实测复现**，确认线上 402 的
+  `failure.message` 就是 `402: {json}`。
+- **命中裸 message**：不带 JSON 包裹的官方文案也命中。
+- **尾部 `request_id` 不影响识别**：去掉 ` (request_id: …)` 后仍命中。
+- **余额类 402 不命中**：`insufficient_credit` / `reject_no_credit` 两型在多种形态下均判为不处理
+  （注意 pi-ai 自己会把 `insufficient_credit` 也归类为 `QUOTA`，本插件不依赖 `failure.code`，
+  因此不会被带偏）。
+- **只认语义不认外壳**：三型 402 的 JSON 外壳相同（`{"error":{"code":"402",...}}`），
+  仅凭 `code=402` 不足以判定。
+- **结论**：既有识别规则（`quote_exceeded` 子串、`subscription quota limit/exhausted`、
+  `reached your subscription quota limit`、`"type":"quote_exceeded"`）**无需修订**即覆盖线上文案。
+
 ### 结论与剩余
 
 - ✅ §8.3 统计字段映射已用真实样本核对通过（§18-8「样本到位后必须通过」→ 已通过）。
-- ⏳ §9.3 的 402 识别正则**仍待真实 402 样本核对**。当前真实账号额度健康
-  （5h `usage_percentage=0.0196`、7d `0.1088`），无法在不耗尽配额的前提下构造真实 402；
-  待拿到真实 `quote_exceeded` 响应（含 `dsh-llm-pi-ai` 压平后的形态）后，再补一次黄金样本回归，
-  必要时按真实样本修订 ZenMux 模板识别规则（现见 `doc/设计文档/平台适配器设计.md` §5.1）。
+- ✅ §9.3 的 402 识别规则已用**线上抓取的真实 402 响应体** + 真实耗尽统计核对通过（§18-18 → 已通过）。
+- ✅ 无残留：此前「缺逐字节 402 HTTP 响应体」的缺口已由 `chat_402.bin` 补齐并逐字节入库。
 
-验证：`pnpm typecheck` ✅、`pnpm test` → **7 个测试文件、75 个用例全部通过** ✅。
+验证：`pnpm typecheck` ✅、`pnpm test` → **9 个测试文件、120 个用例全部通过** ✅。
 
 ---
 
@@ -302,7 +344,8 @@ Playwright 无头 Chromium 渲染：
 
 ### 未覆盖
 
-- 真实 402 黄金样本核对仍待办（与本次升级无关，见上一节）。
+- （已消除）真实 402 识别规则核对：见「黄金样本回归」样本 2/3，现已完成且无残留
+  （真实 402 响应体已逐字节入库）。
 
 ---
 

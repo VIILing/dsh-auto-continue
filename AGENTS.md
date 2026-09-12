@@ -94,7 +94,11 @@ src/
 tests/                 # vitest：config / settings / api / client-api / client-edit-state /
                        #   recovery / integration / platforms/zenmux（黄金样本）、
                        #   platforms/contract（第二平台契约）
-tests/fixtures/        # 黄金样本：真实 API 原始响应（如 zenmux-subscription-detail.json），逐字节保存
+                       #   platforms/zenmux-402-sample.ts（402 响应体/压平形态常量，非 spec）
+tests/fixtures/        # 黄金样本：真实 API 原始响应，逐字节保存
+                       #   zenmux-subscription-detail.json（健康账号统计）
+                       #   zenmux-subscription-detail-402.json（达到配额上限时的统计）
+                       #   zenmux-402-quote-exceeded.json（线上抓取的真实 402 错误响应体）
 tests/e2e/             # Playwright：*.e2e.ts（不被 vitest 收集）
 scripts/e2e-mount.sh   # e2e 编排
 ```
@@ -203,9 +207,15 @@ base 层需要能提前声明），settings 写入路径严格抛错。
   （base 层可声明未注册平台、独立插件注册、端点三档优先级、`options` 透传与 `optionsSchema`
   校验、`isExhausted` 覆盖、注销生效）。改适配器接口时必须同步更新它。
 - **黄金样本**：`tests/fixtures/` 下保存真实 API 原始响应（逐字节，勿改写），由
-  `tests/platforms/zenmux.spec.ts` 的「黄金样本」用例钉死字段映射。修改适配器解析逻辑时必须
-  让这些用例继续通过；若真实响应结构漂移，以样本为准修订映射并同步文档。
-- 当前基线：`pnpm test` 9 个文件 / 108 用例，`pnpm test:e2e` 3 用例。不要把用例数量当作硬指标，
+  `tests/platforms/zenmux.spec.ts` 的「黄金样本」用例钉死字段映射与 402 识别规则。修改适配器
+  解析/识别逻辑时必须让这些用例继续通过；若真实响应结构漂移，以样本为准修订映射并同步文档。
+  现有样本：健康账号统计、**达到配额上限（402 条件成立）的统计**、**线上抓取的真实 402 错误响应体**
+  （`zenmux-402-quote-exceeded.json`，尾部带 `request_id`）；识别回归同时覆盖 JSON 原文、
+  `dsh-llm-pi-ai` 压平后的 `402: {json}` 与 `402 <message>` 形态，以及两类余额 402 的负例。
+  三型响应体与压平形态集中在 `tests/platforms/zenmux-402-sample.ts`（非 spec，供平台与集成用例共用）；
+  余额类两型暂无线上样本，取自 ZenMux 官方错误码参考
+  <https://zenmux.ai/docs/guide/advanced/error-codes>。
+- 当前基线：`pnpm test` 9 个文件 / 120 用例，`pnpm test:e2e` 3 用例。不要把用例数量当作硬指标，
   但**不得让基线回退**。
 
 ## 9. 已知待办与风险
@@ -217,10 +227,13 @@ base 层需要能提前声明），settings 写入路径严格抛错。
 - **黄金样本核对进度**（需求 §7 验收第 17/18 条）：
   - ✅ **统计字段映射已核对**：真实 `subscription/detail` 响应保存在
     `tests/fixtures/zenmux-subscription-detail.json`，由黄金样本用例锁定字段映射与
-    `fetchQuota` 全链路（详见 `PROGRESS.md`「黄金样本回归」）。
-  - ⏳ **402 识别正则仍待真实 402 样本核对**：当前样本账号额度健康，无法构造真实 402。
-    拿到真实 `quote_exceeded` 响应后补一次回归，必要时按真实样本修订 ZenMux 模板的识别规则
-    （见 `doc/设计文档/平台适配器设计.md` §5.1）。
+    `fetchQuota` 全链路（详见 `PROGRESS.md`「黄金样本回归」样本 1）。
+  - ✅ **402 识别规则已核对**：**线上抓取的真实 402 响应体**（`quote_exceeded`，逐字节保存在
+    `tests/fixtures/zenmux-402-quote-exceeded.json`）与账号达到配额上限时的真实统计响应
+    （`tests/fixtures/zenmux-subscription-detail-402.json`，5h 已耗尽 → 等 5h 重置）一起回归；
+    压平形态 `402: {json}` 已用真实 `dsh-llm-pi-ai` 的 `normalizeProviderError` /
+    `formatProviderError` 实测复现，`quote_exceeded` 命中、`insufficient_credit`/`reject_no_credit`
+    不命中。**现有识别规则无需修订**，无残留。
 - `dsh-llm-pi-ai` 的错误压平行为可能变化（`failure.message` 可能是人类可读文本，也可能是转义的
   JSON 字符串）；识别逻辑必须同时覆盖两种形态。
 - 长等待（5h/7d）依赖本机时钟解析 ISO 时间；实现用分段等待降低定时器漂移风险，改动等待逻辑时

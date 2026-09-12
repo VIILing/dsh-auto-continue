@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent, RequestErrorAction } from '@deepseek-ai/dsh-agent'
 import type { LlmFailure } from '@deepseek-ai/dsh-llm'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import QuotaRuntime from '../src/index.ts'
 import type { Config, PlatformInstanceConfig } from '../src/config.ts'
+import { QUOTE_EXCEEDED_BODY, piAiFlattenedMessage } from './platforms/zenmux-402-sample.ts'
 
 const NOW = new Date('2026-03-24T08:00:00.000Z')
 
@@ -111,6 +113,31 @@ describe('QuotaRuntime 集成（v2 实例维度）', () => {
     const promise = ctx.waterfall('agent/request-error', payload, next)
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(100000 + 5000)
+
+    const action = await promise
+    expect(action).toEqual({ kind: 'retry' })
+    expect(next).not.toHaveBeenCalled()
+  })
+
+  it('黄金样本全链路：真实 402 文案 + 真实耗尽统计 → 等到 5h 重置后 retry', async () => {
+    const goldenStats: unknown = JSON.parse(
+      readFileSync(new URL('./fixtures/zenmux-subscription-detail-402.json', import.meta.url), 'utf8'),
+    )
+    stubFetch(goldenStats)
+
+    const ctx = await mount(makeConfig())
+    const next = vi.fn(async () => undefined as RequestErrorAction)
+    // 真实链路里 pi-ai 只给出 message/code（无 status），故这里也刻意不带 status。
+    const payload = makePayload('zenmux-provider', {
+      message: piAiFlattenedMessage(QUOTE_EXCEEDED_BODY),
+      code: 'QUOTA',
+    })
+
+    const promise = ctx.waterfall('agent/request-error', payload, next)
+    await vi.advanceTimersByTimeAsync(0)
+
+    const resets5 = Date.parse('2026-09-12T11:02:38.000Z')
+    await vi.advanceTimersByTimeAsync(resets5 + 5000 - NOW.getTime())
 
     const action = await promise
     expect(action).toEqual({ kind: 'retry' })
